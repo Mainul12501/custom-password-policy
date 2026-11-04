@@ -4,11 +4,14 @@ namespace Mainul\PasswordPolicy\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Mainul\PasswordPolicy\Http\Middleware\Concerns\ChecksExcludedRequests;
 use Mainul\PasswordPolicy\Services\PasswordExpiryService;
 use Symfony\Component\HttpFoundation\Response;
 
 class PasswordExpiryMiddleware
 {
+    use ChecksExcludedRequests;
+
     public function __construct(
         protected PasswordExpiryService $expiryService
     ) {}
@@ -36,36 +39,12 @@ class PasswordExpiryMiddleware
         return $next($request);
     }
 
-    protected function isExcluded(Request $request): bool
-    {
-        $excludedRoutes = config('password-policy.middleware.excluded_routes', []);
-        $excludedPaths = config('password-policy.middleware.excluded_paths', []);
-
-        if ($request->route() && in_array($request->route()->getName(), $excludedRoutes)) {
-            return true;
-        }
-
-        foreach ($excludedPaths as $path) {
-            if ($request->is($path) || $request->is("{$path}/*")) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     protected function respondExpired(Request $request): Response
     {
-        if ($request->expectsJson()) {
-            return response()->json([
-                'message' => 'Your password has expired. Please change your password to continue.',
-                'error'   => 'password_expired',
-            ], 403);
-        }
-
-        $route = config('password-policy.middleware.password_change_route', 'password.change');
-
-        return redirect()->route($route)
-            ->with('warning', 'Your password has expired. Please change your password to continue.');
+        return $this->blockOrRedirect(
+            $request,
+            'Your password has expired. Please change your password to continue.',
+            'password_expired'
+        );
     }
 }

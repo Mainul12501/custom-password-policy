@@ -2,14 +2,11 @@
 
 namespace Mainul\PasswordPolicy\Tests;
 
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mainul\PasswordPolicy\PasswordPolicyServiceProvider;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 
 abstract class TestCase extends OrchestraTestCase
 {
-    use RefreshDatabase;
-
     protected function getPackageProviders($app): array
     {
         return [
@@ -25,6 +22,8 @@ abstract class TestCase extends OrchestraTestCase
             'database' => ':memory:',
         ]);
 
+        $app['config']->set('app.key', 'base64:' . base64_encode(str_repeat('k', 32)));
+        $app['config']->set('cache.default', 'array');
         $app['config']->set('password-policy.user_model', User::class);
     }
 
@@ -32,5 +31,6 @@ abstract class TestCase extends OrchestraTestCase
     {
         $this->loadLaravelMigrations();
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+        $this->loadMigrationsFrom(__DIR__ . '/migrations');
     }
 }

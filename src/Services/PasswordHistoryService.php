@@ -14,7 +14,7 @@ class PasswordHistoryService
             return false;
         }
 
-        $maxReuse = config('password-policy.history.max_reuse_count', 3);
+        $maxReuse = app(PolicyProfile::class)->historyCount($user);
 
         if ($maxReuse <= 0) {
             return false;
