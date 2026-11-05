@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+Aligns the package with the Password Control Policy (PCP/01).
+
+### Changed
+- Defaults now match the policy: `rules.min_length` 11, `expiry.days` 30, `history.max_reuse_count` 5.
+
+### Added
+- `rules.forbid_personal_info`: rejects passwords containing the user's name, email name, phone number or birthdate (use `PasswordPolicyRule::for($user)`).
+- `rules.banned_words`: rejects common words and the company name.
+- `rules.forbid_patterns`: rejects repeated (`aaaa`) and sequential (`1234`, `abcd`) characters.
+- `columns.birthdate` (default `date_of_birth`).
+- Authenticator-app (TOTP) login: `Mfa\TotpDriver`, `TotpEnrollmentService`, bundled routes/views
+  (`totp.routes`), recovery codes, replay protection and lockout on wrong codes. Off by default; once enabled it is
+  required (`totp.scope`, `totp.grace_days`).
+- `SettingsRepository` and the `password_policy_settings` table: database overrides over config defaults for
+  `totp.enabled`, `scope`, `grace_days`, `issuer`. `totp.lock_to_config` pins the policy in code.
+- `password-policy:totp` command (`--enable`, `--disable`, `--status`, `--scope`, `--grace-days`, `--reset`).
+- `password-policy:check` reports how many users have not enrolled.
+- Migrations `mfa_credentials` and `password_policy_settings`.
+
+### Changed
+- `MfaService::verify()` now renews the session id on success and counts failures toward the account lockout.
+
 ## 0.2.0
 
 Implements the Remark HB Software Password Architecture Policy (RHBL-CO-IT-POL-001, Rev 01).

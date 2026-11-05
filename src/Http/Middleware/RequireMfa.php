@@ -32,6 +32,10 @@ class RequireMfa
         }
 
         if (! $this->mfa->isEnrolled($user)) {
+            if ($this->mfa->inEnrollmentGrace()) {
+                return $next($request);
+            }
+
             return $this->deny($request, 'mfa_enrollment_required', 'You must set up multi-factor authentication.', config('password-policy.mfa.enroll_route'));
         }
 

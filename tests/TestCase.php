@@ -27,6 +27,20 @@ abstract class TestCase extends OrchestraTestCase
         $app['config']->set('password-policy.user_model', User::class);
     }
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Most tests exercise mechanics, not the shipped defaults, so they run
+        // against a lenient baseline. PolicyDefaultsTest covers the defaults.
+        config()->set('password-policy.rules.min_length', 8);
+        config()->set('password-policy.rules.forbid_personal_info', false);
+        config()->set('password-policy.rules.banned_words', []);
+        config()->set('password-policy.rules.forbid_patterns', false);
+        config()->set('password-policy.expiry.days', 90);
+        config()->set('password-policy.history.max_reuse_count', 3);
+    }
+
     protected function defineDatabaseMigrations(): void
     {
         $this->loadLaravelMigrations();

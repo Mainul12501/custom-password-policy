@@ -18,6 +18,8 @@ php artisan migrate        # the package loads its own migrations
 php artisan password-policy:check
 ```
 
+Optional: `composer require bacon/bacon-qr-code` to show a QR code on the authenticator-app set-up page.
+
 Optional: `composer require xenon/laravelbdsms` to deliver temporary passwords and reset codes by SMS
 when a user has no company email.
 
@@ -84,6 +86,18 @@ when a user has no company email.
 
 5. **Forgot-password form** (optional, 3.6.6): `'email' => [new CanSelfResetPassword()]`.
 
+   **Reset identity check** (3.6.2, optional, useful for phone-only users): send and check a one-time code
+   in your reset flow before accepting the new password.
+
+   ```php
+   $verifier = app(\Mainul\PasswordPolicy\Contracts\ResetIdentityVerifier::class);
+
+   $verifier->issue($user);                          // code goes to company email, else phone
+   if (! $verifier->verify($user, $request->code)) { // single use, 10 min, locks after 5 wrong tries
+       abort(422, 'Invalid or expired code.');
+   }
+   ```
+
 6. **Logs**: to keep secrets out of application logs (3.7.2), add the tap to your channel:
 
    ```php
@@ -102,7 +116,8 @@ when a user has no company email.
 
 ## What each part does
 
-- **Password rules**: `PasswordPolicyRule` (length, upper, lower, number, special), `PasswordNotReusedRule`,
+- **Password rules**: `PasswordPolicyRule` (length, upper, lower, number, special, plus the checks in
+  [Password Control Policy defaults](#password-control-policy-pcp01-defaults)), `PasswordNotReusedRule`,
   `CurrentPasswordRule`. Admins get stricter values via `PasswordPolicyRule::for($user)`.
 - **Temporary passwords**: `TemporaryPasswordService::issueFor($user)` generates a random password, delivers it
   by company email (SMS only when there is no usable email) and forces a change at first login.
@@ -116,10 +131,81 @@ when a user has no company email.
   `password_audit_logs`. Secrets are redacted before they are stored.
 - **Monitoring**: repeated failures and logins from a new network raise a `UnusualLoginDetected` event, an audit
   entry and (optionally) an email.
-- **MFA**: you supply the factor by implementing `Contracts\MfaDriver` and setting `mfa.driver`.
+- **MFA**: you supply the factor by implementing `Contracts\MfaDriver` and setting `mfa.driver`, or use the
+  built-in authenticator-app login (see below).
 - **Service accounts**: register with `ServiceAccountService::register($user, $owner, $purpose)`. They rotate on a
   schedule and the new secret goes to your vault callback (`service_accounts.vault`).
 - **Offboarding**: `php artisan password-policy:offboard {id|email}`.
+
+## Password Control Policy (PCP/01) defaults
+
+The shipped defaults follow the Remark HB Password Control Policy:
+
+| Setting | Default | Policy |
+|---|---|---|
+| `rules.min_length` | 11 | At least 11 characters |
+| `rules.require_*` | on | Upper, lower, number and special character |
+| `expiry.days` | 30 | Change every 30 days |
+| `history.max_reuse_count` | 5 | No reuse of the last five passwords |
+
+Three more checks in `rules` cover the "don't" list. All are on by default:
+
+- `forbid_personal_info`: rejects a password containing the user's name parts, the part of their email before the
+  `@`, their phone number or their birthdate. It needs the user, so validate with `PasswordPolicyRule::for($user)`
+  (without a user this check is skipped). The birthdate is read from `columns.birthdate` (default `date_of_birth`).
+- `banned_words`: rejects passwords containing any listed word, ignoring case. The default list holds the
+  company name and common words (`remark`, `remarkhb`, `password`, `welcome`, `admin`, `qwerty`, `letmein`,
+  `changeme`). Edit it in the published config.
+- `forbid_patterns`: rejects four or more repeated characters (`aaaa`) and four or more sequential ones
+  (`1234`, `abcd`, `dcba`).
+
+Admins keep stricter values (14 characters, 60-day expiry): the stricter of the global and admin setting applies, so
+with the 30-day default admins also change every 30 days.
+
+Not enforceable in code: sharing or writing down passwords, reusing a password across systems, browser
+"Remember Password", and keeping an admin password different from the same person's user-account password.
+
+If you upgrade an existing app, the stricter defaults and checks apply to the next password change. Set the old
+values in your published config to keep them.
+
+## Authenticator app login (TOTP)
+
+An optional second step: after the password, the user types the 6-digit code from Google Authenticator,
+Microsoft Authenticator, Authy or any TOTP app. It is **off by default**. Once enabled it is required, and
+users without an app are sent to a set-up page.
+
+```bash
+php artisan migrate                      # adds mfa_credentials and password_policy_settings
+php artisan password-policy:totp --enable --scope=all --grace-days=7
+```
+
+Then either use the bundled pages or build your own on `TotpEnrollmentService`:
+
+1. Set `totp.routes` to `true` in the published config. This adds `mfa/enroll`, `mfa/challenge` and
+   `mfa/recovery-codes` (route names `mfa.enroll`, `mfa.enroll.confirm`, `mfa.challenge`, `mfa.verify`,
+   `mfa.recovery`). Publish the views with `--tag=password-policy-views` to restyle them.
+2. Put the `password.mfa` middleware on your authenticated routes. After a password login it redirects to the
+   set-up page (no app yet) or the code page (app set up, code not yet entered).
+3. Optional QR code: `composer require bacon/bacon-qr-code`. Without it the page shows the key to type in.
+
+**Config or database?** `config/password-policy.php` (`totp` block) holds the defaults. The
+`password_policy_settings` table holds runtime overrides for `totp.enabled`, `totp.scope`, `totp.grace_days`
+and `totp.issuer`; the database wins. Change them with `password-policy:totp` so the change is audited. To pin
+the policy in code, set `totp.enabled` and `totp.lock_to_config` to `true`: the database can then not switch it
+off. If the settings table is unreachable the config defaults are used.
+
+- **Who**: `totp.scope` is `all`, `admins` or `remote` (outside `mfa.internal_networks`). Admins always need MFA.
+- **Grace**: `totp.grace_days` lets users who have not enrolled sign in for that long after
+  `password-policy:totp --enable`. Users who have enrolled are always challenged. Enabling through config
+  alone records no start time, so there is no grace period.
+- **Storage**: the secret is stored **encrypted** with `APP_KEY` (it cannot be hashed, the server must compute
+  codes). Changing `APP_KEY` makes every stored secret unreadable, so users would need a reset. Recovery codes are
+  stored as keyed hashes and shown once.
+- **Protection**: a code can be used once (replay blocked), wrong codes count toward the normal lockout, and the
+  session id is renewed after success. An enrolled app can not be replaced from a password-only session.
+- **Lost phone**: the user enters a recovery code, or an administrator runs
+  `password-policy:totp --reset={id|email}`; the user then sets up again at next login.
+- A `mfa.driver` you configure yourself takes priority over the built-in driver.
 
 ## Commands
 
@@ -130,13 +216,15 @@ when a user has no company email.
 | `password-policy:disable-expired [--dry-run]` | Disable accounts unchanged past expiry plus grace. |
 | `password-policy:rotation-due [--notify] [--rotate]` | List, notify about, or rotate overdue service accounts. |
 | `password-policy:offboard {user} [--actor=]` | Disable a leaver and flag the shared passwords they knew. |
+| `password-policy:totp [--enable] [--disable] [--status] [--scope=] [--grace-days=] [--reset=] [--actor=]` | Turn the authenticator-app login on or off, show its state, or wipe a user's app after a lost device. |
 | `password-policy:audit [--user= --event= --outcome= --limit=]` | Show recent audit entries (server access only). |
 
 ## Configuration
 
 Everything lives in `config/password-policy.php` and is documented inline. The main groups:
 `rules`, `expiry`, `history`, `lockout`, `temporary_password`, `reset`, `anomaly`, `tls`, `audit`,
-`mfa`, `admin`, `service_accounts`, `defaults`, `sessions`, `columns`.
+`mfa`, `totp`, `admin`, `service_accounts`, `defaults`, `sessions`, `columns`, `current_password`, `middleware`
+(routes excluded from the expiry and forced-change checks) and `user_model`.
 
 Production only: HTTPS enforcement (`tls.enforce = null`) is active only when `APP_ENV=production`.
 Set it to `true` or `false` to force it.
@@ -149,7 +237,8 @@ Set it to `true` or `false` to force it.
   The defaults are an interpretation and are configurable. With the default IP burst (5 in 60 s) a person who
   mistypes 5 times in a minute is locked until an administrator unlocks them. Raise
   `lockout.ip_burst.attempts` if that is too strict.
-- **No bundled MFA factor**: until you provide an `MfaDriver`, users who need MFA are blocked.
+- **MFA factor**: until you enable the built-in authenticator app (`totp.enabled`) or provide an `MfaDriver`,
+  users who need MFA are blocked.
 - **Self-reset block**: the response for a restricted role (BA, SO) reveals that the account exists and has that
   role. Unknown emails get the normal answer.
 - **Required columns**: the package migrations add `password_changed_at`, `must_change_password`, `disabled_at`,
@@ -159,7 +248,7 @@ Set it to `true` or `false` to force it.
   time so they are not expired immediately.
 - **Delivery is synchronous**: temporary passwords, reset notices and alerts are sent inline, not queued.
 - **Admin defaults are an assumption**: minimum length 14, expiry 60 days, history 5. The policy only says
-  "stronger controls".
+  "stronger controls". The stricter of the global and admin value applies.
 
 ## Policy compliance
 
@@ -181,8 +270,8 @@ Legend: ✅ implemented by the package · 🔌 implemented, but needs your wirin
 | 3.3.2 | No passwords in URLs/query strings | 🔌 | `password.secure` (query string; headers are not inspected) |
 | 3.4.1 | Limit consecutive failures | 🔌 | `LockoutService` + `LoginGuard` |
 | 3.4.2 | Tiered, extended and IP-burst lockout | 🔌 | `LockoutService` + `LoginGuard` |
-| 3.4.3 | MFA enforced for admin, remote, external | 🔌 | `password.mfa` + your `MfaDriver` |
-| 3.4.4 | MFA available for standard users | 🔌 | `mfa.require_all` + your `MfaDriver` |
+| 3.4.3 | MFA enforced for admin, remote, external | 🔌 | `password.mfa` + the built-in authenticator app (`totp.enabled`) or your `MfaDriver` |
+| 3.4.4 | MFA available for standard users | 🔌 | `mfa.require_all` or `totp.scope = all` + a driver |
 | 3.5.1 | Max age, prompt, disable 1 day later | ✅ | Expiry middleware, `disable-expired`, `password.account_active` |
 | 3.5.2 | Old password invalid after change | ✅ | Trait ends other sessions and tokens |
 | 3.5.3 | Password history | ✅ | `PasswordNotReusedRule` |

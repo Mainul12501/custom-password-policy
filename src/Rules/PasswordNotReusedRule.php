@@ -31,7 +31,7 @@ class PasswordNotReusedRule implements Rule, ValidationRule
      */
     public function message(): string
     {
-        $count = config('password-policy.history.max_reuse_count', 3);
+        $count = config('password-policy.history.max_reuse_count', 5);
 
         return "You cannot reuse any of your last {$count} passwords.";
     }

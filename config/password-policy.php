@@ -12,11 +12,23 @@ return [
     |
     */
     'rules' => [
-        'min_length'        => 8,
+        'min_length'        => 11,
         'require_uppercase' => true,
         'require_lowercase' => true,
         'require_numeric'   => true,
         'require_special'   => true,
+
+        // Reject passwords containing the user's own name, email name, phone
+        // number or birthdate. Needs the user: PasswordPolicyRule::for($user).
+        'forbid_personal_info' => true,
+
+        // Reject passwords containing any of these words (case-insensitive),
+        // e.g. the company name and common words.
+        'banned_words' => ['remark', 'remarkhb', 'password', 'welcome', 'admin', 'qwerty', 'letmein', 'changeme'],
+
+        // Reject trivial patterns: 4+ repeated characters (aaaa) and
+        // 4+ character sequences (1234, abcd).
+        'forbid_patterns' => true,
     ],
 
     /*
@@ -35,7 +47,7 @@ return [
     */
     'expiry' => [
         'enabled'      => true,
-        'days'         => 90,
+        'days'         => 30,
         'grace_days'   => 1,
         'auto_disable' => true,
     ],
@@ -155,6 +167,54 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Authenticator App Login (TOTP)
+    |--------------------------------------------------------------------------
+    |
+    | An optional second step: after the password, the user types the 6-digit
+    | code from Google Authenticator, Microsoft Authenticator, Authy, etc.
+    | Off by default. When enabled it is required, and users who have not set
+    | up an app are sent to the enrolment page.
+    |
+    | These are DEFAULTS. enabled, scope, grace_days and issuer can be
+    | overridden at runtime in the `password_policy_settings` table
+    | (`php artisan password-policy:totp --enable`). The database wins, except:
+    |
+    | lock_to_config: when true and `enabled` is true here, the database can
+    |                 not switch the feature off. Keeps the policy in code.
+    |
+    | enabled:    turn the feature on. Uses TotpDriver unless `mfa.driver` names
+    |             another driver.
+    | scope:      who must use it: `all`, `admins` or `remote` (requests outside
+    |             `mfa.internal_networks`).
+    | grace_days: days after the feature was switched on during which users who
+    |             have not enrolled may still sign in. 0 = enrol immediately.
+    |             Counted from the `totp.enabled_at` setting, which
+    |             `password-policy:totp --enable` records.
+    | issuer:     the name shown in the authenticator app. Defaults to app name.
+    | window:     steps of clock drift accepted either side (1 = +-30s).
+    | routes:     load the bundled enrol/challenge routes and views. Leave false
+    |             to build your own on TotpEnrollmentService.
+    | route_middleware: middleware around the bundled routes.
+    | recovery_codes: how many backup codes are issued.
+    |
+    */
+    'totp' => [
+        'enabled'          => false,
+        'lock_to_config'   => false,
+        'scope'            => 'all',
+        'grace_days'       => 7,
+        'issuer'           => null,
+        'digits'           => 6,
+        'period'           => 30,
+        'algorithm'        => 'sha1',
+        'window'           => 1,
+        'recovery_codes'   => 8,
+        'routes'           => false,
+        'route_middleware' => ['web', 'auth'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Admin Accounts (Policy 3.9.1, 3.9.2)
     |--------------------------------------------------------------------------
     |
@@ -237,7 +297,7 @@ return [
     */
     'history' => [
         'enabled'         => true,
-        'max_reuse_count' => 3,
+        'max_reuse_count' => 5,
     ],
 
     /*
@@ -276,6 +336,7 @@ return [
         'email' => 'email',
         'phone' => 'phone',
         'name'  => 'name',
+        'birthdate' => 'date_of_birth',
     ],
 
     /*

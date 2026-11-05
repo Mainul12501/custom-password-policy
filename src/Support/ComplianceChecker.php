@@ -18,6 +18,7 @@ class ComplianceChecker
             $this->smsDependency(),
             $this->resetLinkExpiry(),
             $this->mfaConfigured(),
+            $this->totpEnrollment(),
             $this->adminSeparation(),
         ];
     }
@@ -88,6 +89,10 @@ class ComplianceChecker
     {
         $driver = config('password-policy.mfa.driver');
 
+        if (! $driver && app(\Mainul\PasswordPolicy\Services\MfaService::class)->totpEnabled()) {
+            return ['MFA driver (3.4.3, 3.9.2)', 'pass', 'Built-in authenticator app (TOTP)'];
+        }
+
         if (! $driver) {
             return ['MFA driver (3.4.3, 3.9.2)', 'warn', 'No driver configured: users who need MFA will be blocked by password.mfa.'];
         }
@@ -95,6 +100,30 @@ class ComplianceChecker
         return class_exists($driver) && is_subclass_of($driver, \Mainul\PasswordPolicy\Contracts\MfaDriver::class)
             ? ['MFA driver (3.4.3, 3.9.2)', 'pass', $driver]
             : ['MFA driver (3.4.3, 3.9.2)', 'fail', "{$driver} does not implement Contracts\\MfaDriver."];
+    }
+
+    /** Authenticator app: how many users still have to enrol. */
+    public function totpEnrollment(): array
+    {
+        $label = 'Authenticator app enrolment';
+
+        if (! app(\Mainul\PasswordPolicy\Services\MfaService::class)->totpEnabled()) {
+            return [$label, 'pass', 'Authenticator app login is off.'];
+        }
+
+        $class = config('password-policy.user_model');
+
+        if (! is_string($class) || ! class_exists($class)) {
+            return [$label, 'warn', 'user_model is not set to an existing class.'];
+        }
+
+        $total = $class::query()->count();
+        $enrolled = \Mainul\PasswordPolicy\Models\MfaCredential::whereNotNull('confirmed_at')->count();
+        $missing = max(0, $total - $enrolled);
+
+        return $missing === 0
+            ? [$label, 'pass', "All {$total} users have set up an authenticator app."]
+            : [$label, 'warn', "{$missing} of {$total} users have not set up an authenticator app."];
     }
 
     /** 3.9.1: admin accounts must not use an everyday mailbox as their login. */

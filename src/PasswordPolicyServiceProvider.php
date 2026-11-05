@@ -54,6 +54,8 @@ class PasswordPolicyServiceProvider extends ServiceProvider
         $this->app->singleton(Services\AccountService::class);
         $this->app->singleton(Services\AccountClassifier::class);
         $this->app->singleton(Services\PolicyProfile::class);
+        $this->app->singleton(Services\SettingsRepository::class);
+        $this->app->bind(Mfa\Totp::class, fn () => Mfa\Totp::fromConfig());
         $this->app->singleton(Services\MfaService::class);
         $this->app->singleton(Services\ServiceAccountService::class);
         $this->app->singleton(Services\OffboardingService::class);
@@ -70,6 +72,8 @@ class PasswordPolicyServiceProvider extends ServiceProvider
     {
         $this->publishAssets();
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+        $this->loadViewsFrom(__DIR__ . '/../resources/views', 'password-policy');
+        $this->registerRoutes();
         $this->registerMiddleware();
         $this->registerValidationRules();
         $this->registerEventListeners();
@@ -86,6 +90,17 @@ class PasswordPolicyServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__ . '/../database/migrations/' => database_path('migrations'),
         ], 'password-policy-migrations');
+
+        $this->publishes([
+            __DIR__ . '/../resources/views' => resource_path('views/vendor/password-policy'),
+        ], 'password-policy-views');
+    }
+
+    protected function registerRoutes(): void
+    {
+        if (config('password-policy.totp.routes', false)) {
+            $this->loadRoutesFrom(__DIR__ . '/../routes/mfa.php');
+        }
     }
 
     protected function registerMiddleware(): void
@@ -161,6 +176,7 @@ class PasswordPolicyServiceProvider extends ServiceProvider
                 CheckDefaultsCommand::class,
                 OffboardCommand::class,
                 RotationDueCommand::class,
+                Console\TotpCommand::class,
             ]);
         }
 

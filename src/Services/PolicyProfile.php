@@ -22,7 +22,7 @@ class PolicyProfile
             $merged = array_merge($rules, (array) config('password-policy.admin.rules', []));
 
             // Admin settings may only tighten the policy, never loosen it.
-            $merged['min_length'] = max((int) ($rules['min_length'] ?? 8), (int) ($merged['min_length'] ?? 0));
+            $merged['min_length'] = max((int) ($rules['min_length'] ?? 11), (int) ($merged['min_length'] ?? 0));
             $rules = $merged;
         }
 
@@ -44,7 +44,7 @@ class PolicyProfile
 
     public function historyCount(?Authenticatable $user = null): int
     {
-        $count = (int) config('password-policy.history.max_reuse_count', 3);
+        $count = (int) config('password-policy.history.max_reuse_count', 5);
         $admin = config('password-policy.admin.history_count');
 
         if ($user && $admin !== null && $count > 0 && $this->classifier->isAdmin($user)) {
