@@ -1,9 +1,26 @@
-#mainul
 # mainul/password-policy
 
-A Laravel package that implements the Remark HB **Software Password Architecture Policy**
-(`RHBL-CO-IT-POL-001`, Rev 01): password rules, expiry and history, temporary passwords,
-lockout, session termination, audit logging, MFA enforcement, and admin/service account controls.
+A Laravel package for enforcing password and account security controls in Laravel applications.
+
+## Features
+
+- **Password rules**: configurable length, uppercase, lowercase, number and special-character requirements,
+  personal-information checks, banned words and pattern detection. Administrators can use stricter rules.
+- **Password history**: prevents users from reusing recent passwords and verifies the current password for
+  voluntary changes.
+- **Temporary passwords**: generates random passwords, delivers them through an approved email or SMS channel
+  and requires a change at first login.
+- **Account lockout**: supports tiered lockout periods, administrator unlocks and rapid-failure detection by IP.
+- **Password expiry**: prompts users when passwords expire and can disable overdue accounts automatically.
+- **Session termination**: ends an account's web sessions and API tokens after password changes, compromise or
+  offboarding.
+- **Audit logging and monitoring**: records security events, redacts secrets and detects unusual login activity.
+- **Multi-factor authentication**: includes optional authenticator-app login and supports custom MFA drivers.
+- **Password reset protection**: supports one-time identity-verification codes and role-based reset restrictions.
+- **Service accounts**: tracks owners and purposes, schedules credential rotation and integrates with a vault
+  callback.
+- **Offboarding and security commands**: disables departing users, flags shared credentials and provides
+  diagnostic, audit and maintenance commands.
 
 Requires PHP 8.2+ and Laravel 10 to 13.
 
@@ -115,32 +132,9 @@ when a user has no company email.
 8. **Schedule**: `password-policy:disable-expired` is scheduled daily automatically. Schedule
    `password-policy:rotation-due --notify` (and `--rotate` if you want automatic rotation) yourself.
 
-## What each part does
-
-- **Password rules**: `PasswordPolicyRule` (length, upper, lower, number, special, plus the checks in
-  [Password Control Policy defaults](#password-control-policy-pcp01-defaults)), `PasswordNotReusedRule`,
-  `CurrentPasswordRule`. Admins get stricter values via `PasswordPolicyRule::for($user)`.
-- **Temporary passwords**: `TemporaryPasswordService::issueFor($user)` generates a random password, delivers it
-  by company email (SMS only when there is no usable email) and forces a change at first login.
-  If no approved channel exists nothing changes. If delivery fails the change is rolled back.
-- **Lockout**: 5 failures lock for 5, 10, then 30 minutes. Later cycles lock for 2 hours and need
-  `LockoutService::unlock($user, $verifiedBy)`. 5 failures from one IP against one account within
-  60 seconds lock it until an administrator unlocks it.
-- **Expiry**: users are prompted at the expiry age and the account is disabled one day later.
-- **Sessions**: `SessionTerminator` ends every session and API token of an account, on any session driver.
-- **Audit log**: logins, password changes, resets, lockouts, disables, MFA, rotations and more, in
-  `password_audit_logs`. Secrets are redacted before they are stored.
-- **Monitoring**: repeated failures and logins from a new network raise a `UnusualLoginDetected` event, an audit
-  entry and (optionally) an email.
-- **MFA**: you supply the factor by implementing `Contracts\MfaDriver` and setting `mfa.driver`, or use the
-  built-in authenticator-app login (see below).
-- **Service accounts**: register with `ServiceAccountService::register($user, $owner, $purpose)`. They rotate on a
-  schedule and the new secret goes to your vault callback (`service_accounts.vault`).
-- **Offboarding**: `php artisan password-policy:offboard {id|email}`.
-
 ## Password Control Policy (PCP/01) defaults
 
-The shipped defaults follow the Remark HB Password Control Policy:
+The package ships with the following password-control defaults:
 
 | Setting | Default | Policy |
 |---|---|---|
@@ -154,9 +148,8 @@ Three more checks in `rules` cover the "don't" list. All are on by default:
 - `forbid_personal_info`: rejects a password containing the user's name parts, the part of their email before the
   `@`, their phone number or their birthdate. It needs the user, so validate with `PasswordPolicyRule::for($user)`
   (without a user this check is skipped). The birthdate is read from `columns.birthdate` (default `date_of_birth`).
-- `banned_words`: rejects passwords containing any listed word, ignoring case. The default list holds the
-  company name and common words (`remark`, `remarkhb`, `password`, `welcome`, `admin`, `qwerty`, `letmein`,
-  `changeme`). Edit it in the published config.
+- `banned_words`: rejects passwords containing any listed word, ignoring case. Edit the list in the published
+  config to include common weak passwords and any organization-specific terms.
 - `forbid_patterns`: rejects four or more repeated characters (`aaaa`) and four or more sequential ones
   (`1234`, `abcd`, `dcba`).
 
