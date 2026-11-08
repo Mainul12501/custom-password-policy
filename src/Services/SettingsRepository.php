@@ -26,6 +26,8 @@ class SettingsRepository
         'totp.grace_days',
         'totp.issuer',
         'totp.enabled_at',
+        'api.enabled',
+        'api.guard',
     ];
 
     public function __construct(protected AuditLogger $audit)
@@ -51,10 +53,16 @@ class SettingsRepository
         return array_key_exists($key, $this->overrides());
     }
 
-    public function set(string $key, mixed $value, Authenticatable|string|null $actor = null): void
+    /** @throws InvalidArgumentException when the key or value would be refused by set() */
+    public function assertValid(string $key, mixed $value): void
     {
         $this->assertOverridable($key);
         $this->validate($key, $value);
+    }
+
+    public function set(string $key, mixed $value, Authenticatable|string|null $actor = null): void
+    {
+        $this->assertValid($key, $value);
 
         $old = $this->get($key);
 
@@ -120,12 +128,33 @@ class SettingsRepository
             'totp.grace_days' => is_int($value) && $value >= 0,
             'totp.issuer'     => $value === null || (is_string($value) && trim($value) !== ''),
             'totp.enabled_at' => $value === null || is_string($value),
+            'api.enabled'     => is_bool($value),
+            'api.guard'       => $this->validGuards($value),
             default           => false,
         };
 
         if (! $ok) {
             throw new InvalidArgumentException("Invalid value for setting [{$key}].");
         }
+    }
+
+    /** A guard name, or a non-empty list of them, that exists in config/auth.php. */
+    protected function validGuards(mixed $value): bool
+    {
+        $names = is_array($value) ? $value : [$value];
+        $known = array_keys((array) config('auth.guards', []));
+
+        if ($names === [] || ! array_is_list($names)) {
+            return false;
+        }
+
+        foreach ($names as $name) {
+            if (! is_string($name) || ! in_array($name, $known, true)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     protected function actorId(Authenticatable|string|null $actor): ?string

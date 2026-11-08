@@ -17,6 +17,8 @@ use Mainul\PasswordPolicy\Console\CheckDefaultsCommand;
 use Mainul\PasswordPolicy\Console\DisableExpiredAccountsCommand;
 use Mainul\PasswordPolicy\Console\OffboardCommand;
 use Mainul\PasswordPolicy\Console\RotationDueCommand;
+use Mainul\PasswordPolicy\Http\Middleware\ApiAuthenticate;
+use Mainul\PasswordPolicy\Http\Middleware\ApiGate;
 use Mainul\PasswordPolicy\Http\Middleware\RequireMfa;
 use Mainul\PasswordPolicy\Events\UnusualLoginDetected;
 use Mainul\PasswordPolicy\Http\Middleware\BlockSelfReset;
@@ -101,6 +103,11 @@ class PasswordPolicyServiceProvider extends ServiceProvider
         if (config('password-policy.totp.routes', false)) {
             $this->loadRoutesFrom(__DIR__ . '/../routes/mfa.php');
         }
+
+        // Always registered, answers 404 until api.enabled is true (config or database).
+        if (! $this->app->routesAreCached()) {
+            $this->loadRoutesFrom(__DIR__ . '/../routes/api.php');
+        }
     }
 
     protected function registerMiddleware(): void
@@ -113,6 +120,8 @@ class PasswordPolicyServiceProvider extends ServiceProvider
         $router->aliasMiddleware('password.session_version', EnsureSessionVersion::class);
         $router->aliasMiddleware('password.block_self_reset', BlockSelfReset::class);
         $router->aliasMiddleware('password.mfa', RequireMfa::class);
+        $router->aliasMiddleware('password.api', ApiGate::class);
+        $router->aliasMiddleware('password.api_auth', ApiAuthenticate::class);
     }
 
     protected function registerValidationRules(): void
@@ -154,8 +163,8 @@ class PasswordPolicyServiceProvider extends ServiceProvider
     }
 
     /**
-     * Reading password audit logs is denied until the host application defines
-     * the ability (Policy 3.7.3). A host Gate::define() runs later and wins.
+     * Reading password audit logs (and every API admin action) is denied until
+     * the host application defines the ability (Policy 3.7.3). A host Gate::define() runs later and wins.
      */
     protected function registerAuditGate(): void
     {
@@ -163,6 +172,13 @@ class PasswordPolicyServiceProvider extends ServiceProvider
 
         if (! Gate::has($ability)) {
             Gate::define($ability, fn ($user = null) => false);
+        }
+
+        // The API's admin abilities are denied the same way until you define them.
+        foreach ((array) config('password-policy.api.abilities', []) as $apiAbility) {
+            if ($apiAbility && ! Gate::has($apiAbility)) {
+                Gate::define($apiAbility, fn ($user = null) => false);
+            }
         }
     }
 

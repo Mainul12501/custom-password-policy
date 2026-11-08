@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added: JSON API
+- Every feature is now available over HTTP (`routes/api.php`, prefix `api/password-policy`): own password
+  (policy, status, validate, change), authenticator app, pre-login lock check, one-time-code password reset,
+  and administration (user unlock/disable/compromise/offboard/temporary password/sessions/MFA reset, service
+  accounts, settings, audit log, compliance check, default-password scan, expired-account sweep).
+- Auth guard defaults to `auth:sanctum`; Passport or any guard works through `api.guard`, which can be set in
+  config or in the `password_policy_settings` table (`api.enabled` and `api.guard` are database-overridable).
+- MFA "verified" state for token clients (no session): remembered per bearer token for `mfa.token_ttl_minutes`.
+- `SessionTerminator` keeps the caller's own Sanctum/Passport token when a user changes their own password.
+- `ExpiredAccountSweeper` and `DefaultPasswordScanner` services; the commands now use them.
+
 Aligns the package with the Password Control Policy (PCP/01).
 
 ### Changed

@@ -29,7 +29,9 @@
         "illuminate/mail": "^10.0|^11.0|^12.0|^13.0"
     },
     "suggest": {
-        "xenon/laravelbdsms": "Required to deliver temporary passwords by SMS when a user has no company email (policy 3.1.3)."
+        "xenon/laravelbdsms": "Required to deliver temporary passwords by SMS when a user has no company email (policy 3.1.3).",
+        "laravel/sanctum": "Default authentication guard for the JSON API (api.guard = sanctum).",
+        "laravel/passport": "Alternative API authentication: set api.guard to your passport guard."
     },
     "require-dev": {
         "orchestra/testbench": "^8.0|^9.0|^10.0|^11.0",

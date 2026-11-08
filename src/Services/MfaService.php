@@ -5,6 +5,7 @@ namespace Mainul\PasswordPolicy\Services;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Mainul\PasswordPolicy\Mfa\TotpDriver;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\IpUtils;
@@ -121,8 +122,13 @@ class MfaService
 
     public function isVerified(Authenticatable $user, Request $request): bool
     {
-        return $request->hasSession()
-            && (string) $request->session()->get(self::SESSION_KEY) === (string) $user->getAuthIdentifier();
+        if ($request->hasSession()) {
+            return (string) $request->session()->get(self::SESSION_KEY) === (string) $user->getAuthIdentifier();
+        }
+
+        $key = $this->tokenKey($user, $request);
+
+        return $key !== null && Cache::has($key);
     }
 
     public function challenge(Authenticatable $user): void
@@ -157,19 +163,47 @@ class MfaService
         return $ok;
     }
 
-    /** Mark this session as having passed MFA and rotate the session id. */
+    /**
+     * Mark this session as having passed MFA and rotate the session id.
+     * Requests without a session (API tokens) are remembered per token for
+     * `mfa.token_ttl_minutes`; the cache must be shared between servers.
+     */
     public function markVerified(Authenticatable $user, Request $request): void
     {
         if ($request->hasSession()) {
             $request->session()->regenerate();
             $request->session()->put(self::SESSION_KEY, $user->getAuthIdentifier());
+
+            return;
+        }
+
+        if ($key = $this->tokenKey($user, $request)) {
+            Cache::put($key, true, now()->addMinutes((int) config('password-policy.mfa.token_ttl_minutes', 720)));
         }
     }
 
-    public function forget(Request $request): void
+    public function forget(Request $request, ?Authenticatable $user = null): void
     {
         if ($request->hasSession()) {
             $request->session()->forget(self::SESSION_KEY);
+
+            return;
         }
+
+        if ($user && ($key = $this->tokenKey($user, $request))) {
+            Cache::forget($key);
+        }
+    }
+
+    /** Cache key for a bearer token. The token itself is never stored. */
+    protected function tokenKey(Authenticatable $user, Request $request): ?string
+    {
+        $token = $request->bearerToken();
+
+        if ($token === null || $token === '') {
+            return null;
+        }
+
+        return 'password-policy:mfa:' . $user->getAuthIdentifier() . ':' . hash('sha256', $token);
     }
 }

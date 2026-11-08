@@ -159,6 +159,9 @@ return [
         'require_remote'    => true,
         'internal_networks' => [],
         'require_all'       => false,
+        // How long an API token stays "MFA verified" after a correct code.
+        // Session-based requests stay verified for the life of the session.
+        'token_ttl_minutes' => 720,
         'challenge_route'   => 'mfa.challenge',
         'enroll_route'      => 'mfa.enroll',
         'excluded_routes'   => ['mfa.challenge', 'mfa.verify', 'mfa.enroll', 'logout'],
@@ -211,6 +214,50 @@ return [
         'recovery_codes'   => 8,
         'routes'           => false,
         'route_middleware' => ['web', 'auth'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | JSON API
+    |--------------------------------------------------------------------------
+    |
+    | Every feature of the package is also available over HTTP for mobile apps,
+    | SPAs and other services. The routes are always registered but answer 404
+    | until `enabled` is true.
+    |
+    | enabled and guard are DEFAULTS. Both can be overridden at runtime in the
+    | `password_policy_settings` table (keys `api.enabled`, `api.guard`), and
+    | the database wins.
+    |
+    | guard:       the auth guard that identifies the caller. `sanctum` is the
+    |              default. For Laravel Passport use the guard whose driver is
+    |              `passport` (usually `api`). A list tries each guard in turn.
+    | prefix:      URL prefix of every endpoint.
+    | middleware:  middleware around every endpoint (before authentication).
+    | throttle:    "attempts,minutes" for the unauthenticated endpoints and for
+    |              the endpoints that check a secret.
+    | admin_requires_mfa: put `password.mfa` on the /admin endpoints.
+    | abilities:   Gate abilities protecting the /admin endpoints. Each denies
+    |              everyone until your application defines it with Gate::define().
+    |              Reading the audit log uses `audit.gate_ability`.
+    |
+    */
+    'api' => [
+        'enabled'    => false,
+        'guard'      => 'sanctum',
+        'prefix'     => 'api/password-policy',
+        'middleware' => ['api'],
+        'throttle'   => [
+            'public'    => '6,1',
+            'sensitive' => '10,1',
+        ],
+        'admin_requires_mfa' => true,
+        'abilities'  => [
+            'users'            => 'password-policy.manage-users',
+            'service_accounts' => 'password-policy.manage-service-accounts',
+            'settings'         => 'password-policy.manage-settings',
+            'compliance'       => 'password-policy.view-compliance',
+        ],
     ],
 
     /*

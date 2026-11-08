@@ -52,7 +52,7 @@ class SessionTerminator
         }
 
         $this->deleteDatabaseSessions($user, $currentSessionId);
-        $this->revokeTokens($user);
+        $this->revokeTokens($user, $keepCurrent ? $this->currentTokenId($user) : null);
 
         $this->audit->log('sessions_terminated', AuditLogger::OUTCOME_SUCCESS, $user, null, ['reason' => $reason]);
     }
@@ -88,10 +88,41 @@ class SessionTerminator
         }
     }
 
-    protected function revokeTokens(Authenticatable $user): void
+    protected function revokeTokens(Authenticatable $user, string|int|null $exceptId = null): void
     {
-        if (method_exists($user, 'tokens')) {
-            $user->tokens()->delete();
+        if (! method_exists($user, 'tokens')) {
+            return;
+        }
+
+        $user->tokens()
+            ->when($exceptId !== null, fn ($q) => $q->where('id', '!=', $exceptId))
+            ->delete();
+    }
+
+    /**
+     * Id of the API token making this request, when it belongs to $user
+     * (Sanctum: currentAccessToken(), Passport: token()).
+     */
+    protected function currentTokenId(Authenticatable $user): string|int|null
+    {
+        if (! app()->bound('request')) {
+            return null;
+        }
+
+        try {
+            $current = request()->user();
+
+            if (! $current || (string) $current->getAuthIdentifier() !== (string) $user->getAuthIdentifier()) {
+                return null;
+            }
+
+            $token = method_exists($current, 'currentAccessToken')
+                ? $current->currentAccessToken()
+                : (method_exists($current, 'token') ? $current->token() : null);
+
+            return is_object($token) ? ($token->id ?? null) : null;
+        } catch (Throwable) {
+            return null;
         }
     }
 }

@@ -21,6 +21,9 @@ A Laravel package for enforcing password and account security controls in Larave
   callback.
 - **Offboarding and security commands**: disables departing users, flags shared credentials and provides
   diagnostic, audit and maintenance commands.
+- **JSON API**: every feature above is also available over HTTP for mobile apps, SPAs and other services.
+  Uses Sanctum by default; Passport or any guard can be chosen in config or the database
+  (see [JSON API](#json-api)).
 
 Requires PHP 8.2+ and Laravel 10 to 13.
 
@@ -95,7 +98,8 @@ when a user has no company email.
    use Mainul\PasswordPolicy\Rules\{PasswordPolicyRule, PasswordNotReusedRule, CurrentPasswordRule};
 
    $request->validate([
-       'current_password' => [new CurrentPasswordRule($user)],          // 3.5.4
+       // A rule object is skipped when the field is missing, so require it too.
+       'current_password' => ['required', new CurrentPasswordRule($user)], // 3.5.4
        'password' => ['required', 'confirmed',
            PasswordPolicyRule::for($user),                              // admins get stricter rules
            new PasswordNotReusedRule($user)],                           // 3.5.3
@@ -184,7 +188,7 @@ Then either use the bundled pages or build your own on `TotpEnrollmentService`:
 
 **Config or database?** `config/password-policy.php` (`totp` block) holds the defaults. The
 `password_policy_settings` table holds runtime overrides for `totp.enabled`, `totp.scope`, `totp.grace_days`
-and `totp.issuer`; the database wins. Change them with `password-policy:totp` so the change is audited. To pin
+and `totp.issuer`; the database wins. Change them with `password-policy:totp` or the API (`PUT admin/settings`) so the change is audited. To pin
 the policy in code, set `totp.enabled` and `totp.lock_to_config` to `true`: the database can then not switch it
 off. If the settings table is unreachable the config defaults are used.
 
@@ -200,6 +204,75 @@ off. If the settings table is unreachable the config defaults are used.
 - **Lost phone**: the user enters a recovery code, or an administrator runs
   `password-policy:totp --reset={id|email}`; the user then sets up again at next login.
 - A `mfa.driver` you configure yourself takes priority over the built-in driver.
+
+## JSON API
+
+Everything above is also available over HTTP, for mobile apps, SPAs and other services. It is **off by
+default**: the routes exist but answer `404` until you switch it on, either in the published config
+(`'api' => ['enabled' => true]`) or at runtime with no deploy:
+
+```php
+app(\Mainul\PasswordPolicy\Services\SettingsRepository::class)->set('api.enabled', true);
+```
+
+**Authentication.** The guard is `sanctum` by default (`composer require laravel/sanctum`). For Passport set
+`api.guard` to the guard whose driver is `passport` (usually `api`); a list such as `['sanctum', 'api']` tries each
+in turn. Set it in `config/password-policy.php` or in the database (`api.guard`, checked against
+`config/auth.php`); the database wins. The guard is read on every request, so a change applies at once.
+
+**Authorization.** The `/admin` endpoints are checked against Gate abilities that **deny everyone until you define
+them** (`api.abilities`; the audit log uses `audit.gate_ability`):
+
+```php
+Gate::define('password-policy.manage-users', fn ($user) => $user->isSecurityOfficer());
+Gate::define('password-policy.manage-service-accounts', fn ($user) => $user->isSecurityOfficer());
+Gate::define('password-policy.manage-settings', fn ($user) => $user->isSecurityOfficer());
+Gate::define('password-policy.view-compliance', fn ($user) => $user->isSecurityOfficer());
+```
+
+By default the `/admin` endpoints also sit behind `password.expiry`, `password.force_change` and `password.mfa`
+(`api.admin_requires_mfa`, read when routes load). Admins therefore need an enrolled authenticator app first.
+
+All paths are relative to `api.prefix` (default `/api/password-policy`). Errors are JSON:
+`{"message": "...", "error": "code"}`, or Laravel's `{"errors": {...}}` for validation.
+
+| Method and path | Who | Purpose |
+|---|---|---|
+| `POST login/check` | anyone, throttled | Is this account allowed to try a password? `423` if locked or disabled. Call before checking credentials. |
+| `POST reset/code` | anyone, throttled | Send a one-time code to the user's company email or phone. Always `202`. |
+| `POST reset/password` | anyone, throttled | `email`, `code`, `password`, `password_confirmation`. Checks the code, applies the policy, sets the password. |
+| `GET policy` | signed in | The rules that apply to the caller (admins get stricter ones). |
+| `GET password/status` | signed in | Expiry date, days left, forced-change flag, MFA state. |
+| `POST password/validate` | signed in | Check a candidate password; changes nothing. |
+| `PUT password` | signed in | `current_password`, `password`, `password_confirmation`. Ends the user's other sessions and tokens. |
+| `GET mfa/status` | signed in | Whether MFA is on, required, enrolled, and verified for this token. |
+| `POST mfa/enroll` | signed in | Start set-up: returns the key, the `otpauth://` URI and (with `bacon/bacon-qr-code`) an SVG. |
+| `POST mfa/enroll/confirm` | signed in | `code` from the app. Returns the recovery codes once. |
+| `POST mfa/verify` | signed in | `code` (or a recovery code). Marks **this token** as having passed MFA. |
+| `POST mfa/recovery-codes` | signed in | `password`. New recovery codes; needs a verified token. |
+| `GET admin/users/{id}` | users | Security state of an account. |
+| `POST admin/users/{id}/unlock` | users | `verified_by` is required for permanent and identity-verification locks. |
+| `POST admin/users/{id}/disable`, `.../enable` | users | `reason` optional. Enabling forces a password change. |
+| `POST admin/users/{id}/compromise` | users | Make the password unusable and end every session (3.7.5). |
+| `POST admin/users/{id}/temporary-password` | users | Send a new temporary password to the approved channel. It is never returned. |
+| `POST admin/users/{id}/terminate-sessions` | users | End all sessions and API tokens. |
+| `POST admin/users/{id}/offboard` | users | Disable a leaver and list the shared passwords to rotate. |
+| `DELETE admin/users/{id}/mfa` | users | Wipe a user's authenticator app (lost device). |
+| `POST admin/accounts/disable-expired` | users | `dry_run` optional. Disable accounts past expiry plus grace. |
+| `GET admin/service-accounts[?due=1]` | service accounts | List. |
+| `POST admin/service-accounts` | service accounts | `user_id`, `owner`, `purpose`, `rotation_days`, `known_by[]`. |
+| `POST admin/service-accounts/{id}/rotate`, `.../rotate-due` | service accounts | Rotate through your vault. |
+| `GET`, `PUT admin/settings`, `DELETE admin/settings/{key}` | settings | Database overrides: `totp.*`, `api.enabled`, `api.guard`. |
+| `GET admin/audit` | audit gate | Filters: `user_id`, `event`, `outcome`, `from`, `to`, `per_page`. |
+| `GET admin/compliance` | compliance | The `password-policy:check` self-test. |
+| `POST admin/compliance/default-passwords`, `GET .../{scan_id}` | users | Default-password scan. With `user_id` it answers at once, otherwise it runs as a queued job. |
+
+- **MFA for tokens.** API clients have no session, so a passed MFA code is remembered per bearer token in the cache
+  for `mfa.token_ttl_minutes` (default 12 hours). Use a shared cache store on more than one server. Cookie-based
+  SPA requests keep using the session.
+- **Reset codes.** `reset/password` spends the code before it runs the checks that need the user (reuse, personal
+  information), so those checks cannot be used to probe accounts. If one fails, the user asks for a new code.
+- **Not exposed**: `password-policy:rotation-due --notify` (email) stays a console/scheduler job.
 
 ## Commands
 
@@ -217,7 +290,7 @@ off. If the settings table is unreachable the config defaults are used.
 
 Everything lives in `config/password-policy.php` and is documented inline. The main groups:
 `rules`, `expiry`, `history`, `lockout`, `temporary_password`, `reset`, `anomaly`, `tls`, `audit`,
-`mfa`, `totp`, `admin`, `service_accounts`, `defaults`, `sessions`, `columns`, `current_password`, `middleware`
+`mfa`, `totp`, `api`, `admin`, `service_accounts`, `defaults`, `sessions`, `columns`, `current_password`, `middleware`
 (routes excluded from the expiry and forced-change checks) and `user_model`.
 
 Production only: HTTPS enforcement (`tls.enforce = null`) is active only when `APP_ENV=production`.
