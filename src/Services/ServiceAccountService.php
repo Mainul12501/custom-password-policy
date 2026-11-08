@@ -53,6 +53,86 @@ class ServiceAccountService
         return $account;
     }
 
+    /**
+     * Change owner, purpose, rotation period or the list of people who know
+     * the password. Only the keys given are changed.
+     *
+     * @param  array{owner?:string,purpose?:string,rotation_days?:int,known_by?:array<int,int|string>}  $changes
+     */
+    public function update(Model $user, array $changes): ServiceAccount
+    {
+        $account = ServiceAccount::where('user_id', $user->getKey())->first();
+
+        if (! $account) {
+            throw new RuntimeException('This user is not a registered service account.');
+        }
+
+        $fill = array_intersect_key($changes, array_flip(['owner', 'purpose', 'rotation_days']));
+
+        if (array_key_exists('known_by', $changes)) {
+            $fill['known_by'] = array_values(array_map('intval', (array) $changes['known_by']));
+        }
+
+        if (isset($fill['rotation_days'])) {
+            $last = $account->last_rotated_at ?? $user->password_changed_at ?? null;
+            $fill['next_rotation_at'] = ($last ? \Carbon\Carbon::parse($last) : now())->addDays((int) $fill['rotation_days']);
+        }
+
+        $account->update($fill);
+
+        $this->audit->log('service_account_updated', AuditLogger::OUTCOME_SUCCESS, $user, null, [
+            'changed' => array_keys($fill),
+        ]);
+
+        return $account->refresh();
+    }
+
+    /** Stop treating the user as a service account (it expires like any other from then on). */
+    public function remove(Model $user): bool
+    {
+        $removed = ServiceAccount::where('user_id', $user->getKey())->delete() > 0;
+
+        $this->classifier->forget($user);
+        $this->audit->log('service_account_removed', AuditLogger::OUTCOME_SUCCESS, $user);
+
+        return $removed;
+    }
+
+    /**
+     * Email the owners (when they are addresses) and `notify_recipients` about
+     * overdue rotations. Returns how many addresses were told.
+     */
+    public function notifyDue(?Collection $due = null): int
+    {
+        $due ??= $this->due();
+
+        if ($due->isEmpty()) {
+            return 0;
+        }
+
+        $lines = $due->map(fn ($a) => "- account {$a->user_id} (owner {$a->owner}): {$a->purpose}")->implode("\n");
+        $recipients = array_filter((array) config('password-policy.service_accounts.notify_recipients', []));
+
+        foreach ($due->pluck('owner') as $owner) {
+            if (filter_var($owner, FILTER_VALIDATE_EMAIL)) {
+                $recipients[] = $owner;
+            }
+        }
+
+        $recipients = array_values(array_unique($recipients));
+
+        if ($recipients === []) {
+            return 0;
+        }
+
+        \Illuminate\Support\Facades\Mail::raw(
+            "Service account password rotation is due:\n{$lines}",
+            fn ($m) => $m->to($recipients)->subject('Service account rotation due')
+        );
+
+        return count($recipients);
+    }
+
     /** @return Collection<int,ServiceAccount> */
     public function due(): Collection
     {

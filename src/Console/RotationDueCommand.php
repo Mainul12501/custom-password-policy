@@ -3,7 +3,6 @@
 namespace Mainul\PasswordPolicy\Console;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Mail;
 use Mainul\PasswordPolicy\Services\ServiceAccountService;
 use Throwable;
 
@@ -31,7 +30,7 @@ class RotationDueCommand extends Command
         );
 
         if ($this->option('notify')) {
-            $this->notify($due);
+            $this->notify($due, $service);
         }
 
         $failed = false;
@@ -53,26 +52,12 @@ class RotationDueCommand extends Command
         return $failed ? self::FAILURE : self::SUCCESS;
     }
 
-    protected function notify($due): void
+    protected function notify($due, ServiceAccountService $service): void
     {
-        $lines = $due->map(fn ($a) => "- account {$a->user_id} (owner {$a->owner}): {$a->purpose}")->implode("\n");
-        $recipients = array_filter((array) config('password-policy.service_accounts.notify_recipients', []));
+        $count = $service->notifyDue($due);
 
-        foreach ($due->pluck('owner') as $owner) {
-            if (filter_var($owner, FILTER_VALIDATE_EMAIL)) {
-                $recipients[] = $owner;
-            }
-        }
-
-        $recipients = array_unique($recipients);
-
-        if ($recipients === []) {
-            $this->warn('No recipients to notify (owners are not emails and notify_recipients is empty).');
-
-            return;
-        }
-
-        Mail::raw("Service account password rotation is due:\n{$lines}", fn ($m) => $m->to($recipients)->subject('Service account rotation due'));
-        $this->info('Notified ' . count($recipients) . ' recipient(s).');
+        $count === 0
+            ? $this->warn('No recipients to notify (owners are not emails and notify_recipients is empty).')
+            : $this->info("Notified {$count} recipient(s).");
     }
 }

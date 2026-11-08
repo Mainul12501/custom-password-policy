@@ -47,6 +47,7 @@ Route::prefix(config('password-policy.api.prefix', 'api/password-policy'))
                     Route::get('status', [MfaController::class, 'status'])->name('status');
                     Route::post('enroll', [MfaController::class, 'enroll'])->name('enroll');
                     Route::post('enroll/confirm', [MfaController::class, 'confirmEnrollment'])->middleware($sensitiveThrottle)->name('enroll.confirm');
+                    Route::post('challenge', [MfaController::class, 'challenge'])->middleware($sensitiveThrottle)->name('challenge');
                     Route::post('verify', [MfaController::class, 'verify'])->middleware($sensitiveThrottle)->name('verify');
                     Route::post('recovery-codes', [MfaController::class, 'regenerateRecoveryCodes'])->middleware($sensitiveThrottle)->name('recovery');
                 });
@@ -55,6 +56,8 @@ Route::prefix(config('password-policy.api.prefix', 'api/password-policy'))
                 Route::prefix('admin')->name('admin.')->middleware($adminStack)->group(function () {
                     Route::prefix('users/{user}')->name('users.')->group(function () {
                         Route::get('/', [UserController::class, 'show'])->name('show');
+                        Route::get('known-logins', [UserController::class, 'knownLogins'])->name('known-logins');
+                        Route::post('lock', [UserController::class, 'lock'])->name('lock');
                         Route::post('unlock', [UserController::class, 'unlock'])->name('unlock');
                         Route::post('disable', [UserController::class, 'disable'])->name('disable');
                         Route::post('enable', [UserController::class, 'enable'])->name('enable');
@@ -69,6 +72,9 @@ Route::prefix(config('password-policy.api.prefix', 'api/password-policy'))
 
                     Route::get('service-accounts', [ServiceAccountController::class, 'index'])->name('service-accounts.index');
                     Route::post('service-accounts', [ServiceAccountController::class, 'store'])->name('service-accounts.store');
+                    Route::post('service-accounts/notify-due', [ServiceAccountController::class, 'notifyDue'])->name('service-accounts.notify-due');
+                    Route::put('service-accounts/{user}', [ServiceAccountController::class, 'update'])->name('service-accounts.update');
+                    Route::delete('service-accounts/{user}', [ServiceAccountController::class, 'destroy'])->name('service-accounts.destroy');
                     Route::post('service-accounts/rotate-due', [ServiceAccountController::class, 'rotateDue'])->name('service-accounts.rotate-due');
                     Route::post('service-accounts/{user}/rotate', [ServiceAccountController::class, 'rotate'])->name('service-accounts.rotate');
 

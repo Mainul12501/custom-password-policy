@@ -248,9 +248,12 @@ All paths are relative to `api.prefix` (default `/api/password-policy`). Errors 
 | `GET mfa/status` | signed in | Whether MFA is on, required, enrolled, and verified for this token. |
 | `POST mfa/enroll` | signed in | Start set-up: returns the key, the `otpauth://` URI and (with `bacon/bacon-qr-code`) an SVG. |
 | `POST mfa/enroll/confirm` | signed in | `code` from the app. Returns the recovery codes once. |
-| `POST mfa/verify` | signed in | `code` (or a recovery code). Marks **this token** as having passed MFA. |
-| `POST mfa/recovery-codes` | signed in | `password`. New recovery codes; needs a verified token. |
+| `POST mfa/challenge` | signed in | Start a challenge for drivers that need one (send an SMS code). Works with any MFA driver. |
+| `POST mfa/verify` | signed in | `code` (or a recovery code). Marks **this token** as having passed MFA. Works with any MFA driver. |
+| `POST mfa/recovery-codes` | signed in | `password`. New recovery codes; needs a verified token. Built-in app only. |
 | `GET admin/users/{id}` | users | Security state of an account. |
+| `GET admin/users/{id}/known-logins` | users | Countries and dates of the networks the user has signed in from (the unusual-login baseline). |
+| `POST admin/users/{id}/lock` | users | `reason` optional. Permanent lock; unlocking needs `verified_by`. |
 | `POST admin/users/{id}/unlock` | users | `verified_by` is required for permanent and identity-verification locks. |
 | `POST admin/users/{id}/disable`, `.../enable` | users | `reason` optional. Enabling forces a password change. |
 | `POST admin/users/{id}/compromise` | users | Make the password unusable and end every session (3.7.5). |
@@ -261,7 +264,9 @@ All paths are relative to `api.prefix` (default `/api/password-policy`). Errors 
 | `POST admin/accounts/disable-expired` | users | `dry_run` optional. Disable accounts past expiry plus grace. |
 | `GET admin/service-accounts[?due=1]` | service accounts | List. |
 | `POST admin/service-accounts` | service accounts | `user_id`, `owner`, `purpose`, `rotation_days`, `known_by[]`. |
+| `PUT`, `DELETE admin/service-accounts/{id}` | service accounts | Change owner, purpose, rotation period, `known_by`; or stop treating the user as a service account. |
 | `POST admin/service-accounts/{id}/rotate`, `.../rotate-due` | service accounts | Rotate through your vault. |
+| `POST admin/service-accounts/notify-due` | service accounts | Email owners and `notify_recipients` about overdue rotations. Returns how many were told. |
 | `GET`, `PUT admin/settings`, `DELETE admin/settings/{key}` | settings | Database overrides: `totp.*`, `api.enabled`, `api.guard`. |
 | `GET admin/audit` | audit gate | Filters: `user_id`, `event`, `outcome`, `from`, `to`, `per_page`. |
 | `GET admin/compliance` | compliance | The `password-policy:check` self-test. |
@@ -272,7 +277,12 @@ All paths are relative to `api.prefix` (default `/api/password-policy`). Errors 
   SPA requests keep using the session.
 - **Reset codes.** `reset/password` spends the code before it runs the checks that need the user (reuse, personal
   information), so those checks cannot be used to probe accounts. If one fails, the user asks for a new code.
-- **Not exposed**: `password-policy:rotation-due --notify` (email) stays a console/scheduler job.
+- **Your own MFA driver.** `mfa/challenge`, `mfa/verify` and `mfa/status` work with any `mfa.driver`. Enrolment
+  and recovery codes belong to the built-in authenticator app; with a host driver those two endpoints answer `404`
+  (`mfa_external_driver`) because set-up is your driver's job.
+- **Not part of the API**: the login action itself (the package has none; use `login/check` before yours), and
+  the Laravel reset-*link* flow with its `password.block_self_reset` middleware (the API's own reset applies the
+  same restricted-role rule).
 
 ## Commands
 

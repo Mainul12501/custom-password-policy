@@ -8,6 +8,7 @@ use Mainul\PasswordPolicy\Exceptions\DeliveryFailedException;
 use Mainul\PasswordPolicy\Exceptions\NoSecureChannelException;
 use Mainul\PasswordPolicy\Http\Controllers\Api\ApiController;
 use Mainul\PasswordPolicy\Http\Resources\UserSecurityResource;
+use Mainul\PasswordPolicy\Models\KnownLogin;
 use Mainul\PasswordPolicy\Services\AccountService;
 use Mainul\PasswordPolicy\Services\ExpiredAccountSweeper;
 use Mainul\PasswordPolicy\Services\LockoutService;
@@ -24,6 +25,37 @@ class UserController extends ApiController
         $this->authorizeAbility($request, 'users');
 
         return new UserSecurityResource($this->findUser($user));
+    }
+
+    /** Lock now (permanent: unlocking needs the identity of whoever verified the user). */
+    public function lock(Request $request, string $user, LockoutService $lockout)
+    {
+        $this->authorizeAbility($request, 'users');
+        $data = $request->validate(['reason' => ['nullable', 'string', 'max:255']]);
+        $target = $this->findUser($user);
+
+        $lockout->lock($target, $this->actor($request), $data['reason'] ?? 'administrator');
+
+        return new UserSecurityResource($target->refresh());
+    }
+
+    /** Networks the user has signed in from (the baseline for unusual-login alerts). */
+    public function knownLogins(Request $request, string $user)
+    {
+        $this->authorizeAbility($request, 'users');
+        $target = $this->findUser($user);
+
+        $rows = KnownLogin::where('user_id', $target->getKey())
+            ->orderByDesc('last_seen_at')
+            ->get()
+            // The network hash stays private; only coarse, useful fields are shown.
+            ->map(fn ($l) => [
+                'country'       => $l->country,
+                'first_seen_at' => $l->first_seen_at?->toIso8601String(),
+                'last_seen_at'  => $l->last_seen_at?->toIso8601String(),
+            ]);
+
+        return response()->json(['data' => $rows->values()]);
     }
 
     public function unlock(Request $request, string $user, LockoutService $lockout)

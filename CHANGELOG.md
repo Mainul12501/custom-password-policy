@@ -12,6 +12,9 @@
 - MFA "verified" state for token clients (no session): remembered per bearer token for `mfa.token_ttl_minutes`.
 - `SessionTerminator` keeps the caller's own Sanctum/Passport token when a user changes their own password.
 - `ExpiredAccountSweeper` and `DefaultPasswordScanner` services; the commands now use them.
+- `LockoutService::lock()` (administrator lock), `ServiceAccountService::update()`, `remove()` and `notifyDue()`
+  (`rotation-due --notify` now uses it). All three are available over the API.
+- `mfa/challenge` and `mfa/verify` work with any `mfa.driver`, not only the built-in authenticator app.
 
 Aligns the package with the Password Control Policy (PCP/01).
 

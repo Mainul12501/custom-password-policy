@@ -120,6 +120,21 @@ class LockoutService
         ]);
     }
 
+    /**
+     * Administrator lock (for example while a suspected takeover is looked
+     * into). Permanent: unlocking needs the identity of whoever verified the
+     * user, like any other permanent lock.
+     */
+    public function lock(Model&Authenticatable $user, Authenticatable|string|null $actor = null, string $reason = 'administrator'): void
+    {
+        $this->lockPermanently($user, $reason);
+
+        $this->audit->log('account_locked_by_admin', AuditLogger::OUTCOME_SUCCESS, $user, null, [
+            'reason' => $reason,
+            'actor'  => $actor instanceof Authenticatable ? $actor->getAuthIdentifier() : $actor,
+        ]);
+    }
+
     protected function startCycle(Model&Authenticatable $user): void
     {
         $level = (int) $user->lockout_level + 1;

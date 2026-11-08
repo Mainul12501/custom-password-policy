@@ -33,14 +33,15 @@ class MfaController extends ApiController
             'enrolled'                 => $enrolled,
             'verified'                 => $enrolled && $this->mfa->isVerified($user, $request),
             'in_enrollment_grace'      => $this->mfa->inEnrollmentGrace(),
-            'recovery_codes_remaining' => $this->mfa->totpEnabled() ? $this->enrollment->recoveryCodesRemaining($user) : 0,
+            'built_in'                 => $this->builtIn(),
+            'recovery_codes_remaining' => $this->builtIn() ? $this->enrollment->recoveryCodesRemaining($user) : 0,
         ]]);
     }
 
     /** Start (or resume) enrolment: returns the key and the otpauth URI. */
     public function enroll(Request $request)
     {
-        if ($denied = $this->unavailable()) {
+        if ($denied = $this->builtInUnavailable()) {
             return $denied;
         }
 
@@ -62,7 +63,7 @@ class MfaController extends ApiController
 
     public function confirmEnrollment(Request $request)
     {
-        if ($denied = $this->unavailable()) {
+        if ($denied = $this->builtInUnavailable()) {
             return $denied;
         }
 
@@ -85,6 +86,27 @@ class MfaController extends ApiController
         return response()->json(['data' => ['recovery_codes' => $codes]]);
     }
 
+    /**
+     * Start a challenge for drivers that need one (send an SMS code, push a
+     * prompt). The built-in authenticator app has nothing to send.
+     */
+    public function challenge(Request $request)
+    {
+        if ($denied = $this->unavailable()) {
+            return $denied;
+        }
+
+        $user = $request->user();
+
+        if (! $this->mfa->isEnrolled($user)) {
+            return $this->error('Multi-factor authentication is not set up for this account.', 'mfa_not_enrolled', 409);
+        }
+
+        $this->mfa->challenge($user);
+
+        return $this->message('Challenge started.');
+    }
+
     public function verify(Request $request)
     {
         if ($denied = $this->unavailable()) {
@@ -102,7 +124,7 @@ class MfaController extends ApiController
 
     public function regenerateRecoveryCodes(Request $request)
     {
-        if ($denied = $this->unavailable()) {
+        if ($denied = $this->builtInUnavailable()) {
             return $denied;
         }
 
@@ -124,10 +146,29 @@ class MfaController extends ApiController
         return response()->json(['data' => ['recovery_codes' => $this->enrollment->regenerateRecoveryCodes($user)]]);
     }
 
+    /** Any driver: the built-in authenticator app or the host's own. */
     protected function unavailable()
     {
-        return $this->mfa->totpEnabled()
+        return $this->mfa->hasDriver()
             ? null
+            : $this->error('Multi-factor authentication is not available.', 'mfa_disabled', 404);
+    }
+
+    /** The built-in authenticator app is the active factor (not a host driver). */
+    protected function builtIn(): bool
+    {
+        return $this->mfa->totpEnabled() && ! config('password-policy.mfa.driver');
+    }
+
+    /** Set-up and recovery codes belong to the built-in app; a host driver does its own. */
+    protected function builtInUnavailable()
+    {
+        if ($this->builtIn()) {
+            return null;
+        }
+
+        return $this->mfa->hasDriver()
+            ? $this->error('Set-up is handled by your own MFA driver, not by this package.', 'mfa_external_driver', 404)
             : $this->error('Authenticator app login is not enabled.', 'mfa_disabled', 404);
     }
 

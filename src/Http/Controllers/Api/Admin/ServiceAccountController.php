@@ -48,6 +48,44 @@ class ServiceAccountController extends ApiController
         return response()->json(['data' => $this->present($account)], 201);
     }
 
+    public function update(Request $request, string $user, ServiceAccountService $service)
+    {
+        $this->authorizeAbility($request, 'service_accounts');
+
+        $data = $request->validate([
+            'owner'         => ['sometimes', 'string', 'max:255'],
+            'purpose'       => ['sometimes', 'string', 'max:255'],
+            'rotation_days' => ['sometimes', 'integer', 'min:1', 'max:3650'],
+            'known_by'      => ['sometimes', 'array'],
+            'known_by.*'    => ['integer'],
+        ]);
+
+        try {
+            $account = $service->update($this->findUser($user), $data);
+        } catch (RuntimeException $e) {
+            return $this->error($e->getMessage(), 'not_a_service_account', 404);
+        }
+
+        return response()->json(['data' => $this->present($account)]);
+    }
+
+    public function destroy(Request $request, string $user, ServiceAccountService $service)
+    {
+        $this->authorizeAbility($request, 'service_accounts');
+
+        return $service->remove($this->findUser($user))
+            ? $this->message('Service account removed.')
+            : $this->error('This user is not a registered service account.', 'not_a_service_account', 404);
+    }
+
+    /** Email the owners and `notify_recipients` about overdue rotations. */
+    public function notifyDue(Request $request, ServiceAccountService $service)
+    {
+        $this->authorizeAbility($request, 'service_accounts');
+
+        return response()->json(['notified' => $service->notifyDue()]);
+    }
+
     /** Rotate one account. The new secret goes to the vault and is never returned. */
     public function rotate(Request $request, string $user, ServiceAccountService $service)
     {
