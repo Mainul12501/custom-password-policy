@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('password_policy_settings')) {
+            return;
+        }
+
         Schema::create('password_policy_settings', function (Blueprint $table) {
             $table->string('key')->primary();
             $table->json('value')->nullable();

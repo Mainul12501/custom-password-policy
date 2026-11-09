@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('mfa_credentials')) {
+            return;
+        }
+
         Schema::create('mfa_credentials', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id')->unique();

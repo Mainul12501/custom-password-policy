@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('password_reset_codes')) {
+            return;
+        }
+
         Schema::create('password_reset_codes', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id')->index();
