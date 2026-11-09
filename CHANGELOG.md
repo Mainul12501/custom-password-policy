@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added: automatic temporary password on user creation
+- `temporary_password.auto_issue_on_create` (default `false`): `HasPasswordPolicy` issues and delivers a
+  temporary password when a user is created. Override `shouldIssueTemporaryPassword()` to skip users. Delivery
+  failures are reported/audited and never block the creation.
+
 ### Added: JSON API
 - Every feature is now available over HTTP (`routes/api.php`, prefix `api/password-policy`): own password
   (policy, status, validate, change), authenticator app, pre-login lock check, one-time-code password reset,

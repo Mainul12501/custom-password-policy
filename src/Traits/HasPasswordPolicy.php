@@ -3,8 +3,11 @@
 namespace Mainul\PasswordPolicy\Traits;
 
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Mainul\PasswordPolicy\Exceptions\DeliveryFailedException;
+use Mainul\PasswordPolicy\Exceptions\NoSecureChannelException;
 use Mainul\PasswordPolicy\Models\PasswordHistory;
 use Mainul\PasswordPolicy\Services\AuditLogger;
+use Mainul\PasswordPolicy\Services\TemporaryPasswordService;
 use Mainul\PasswordPolicy\Services\PasswordExpiryService;
 use Mainul\PasswordPolicy\Services\PasswordHistoryService;
 use Mainul\PasswordPolicy\Services\SessionTerminator;
@@ -16,6 +19,22 @@ trait HasPasswordPolicy
 
     public static function bootHasPasswordPolicy(): void
     {
+        // Optional: issue and deliver a temporary password to every new user.
+        static::created(function ($user) {
+            if (! config('password-policy.temporary_password.auto_issue_on_create', false)
+                || ! $user->shouldIssueTemporaryPassword()) {
+                return;
+            }
+
+            try {
+                app(TemporaryPasswordService::class)->issueFor($user);
+            } catch (NoSecureChannelException|DeliveryFailedException $e) {
+                // The account stays created; the failure is already audited.
+                // An administrator can re-issue once a channel is available.
+                report($e);
+            }
+        });
+
         static::updating(function ($user) {
             if ($user->isDirty('password')) {
                 $originalPassword = $user->getOriginal('password');
@@ -66,6 +85,16 @@ trait HasPasswordPolicy
         $this->passwordIsTemporary = true;
 
         return $this;
+    }
+
+    /**
+     * Whether a newly created user should get an automatic temporary password
+     * (only consulted when `temporary_password.auto_issue_on_create` is on).
+     * Override on your model to skip some users, e.g. self-registered ones.
+     */
+    public function shouldIssueTemporaryPassword(): bool
+    {
+        return true;
     }
 
     public function mustChangePassword(): bool

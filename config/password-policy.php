@@ -412,9 +412,16 @@ return [
     |                        has no usable email (3.1.3).
     | company_email_domains: when not empty, only emails on these domains
     |                        count as "company email".
+    | auto_issue_on_create:  when true, every newly created user (model using
+    |                        HasPasswordPolicy) automatically gets a random
+    |                        temporary password delivered and must change it
+    |                        at first login. Override shouldIssueTemporaryPassword()
+    |                        on the model to skip some users. A delivery failure
+    |                        never blocks the user creation; it is reported/audited.
     |
     */
     'temporary_password' => [
+        'auto_issue_on_create'  => false,
         'length'                => 14,
         'delivery_order'        => ['mail', 'sms'],
         'channels'              => [

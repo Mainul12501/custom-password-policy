@@ -391,6 +391,19 @@ try {
   blocks every route except those in `middleware.excluded_routes`.
 - **SMS** needs `composer require xenon/laravelbdsms` and a `phone` column (`columns.phone`).
 
+**Automatic on user creation** (off by default): set `temporary_password.auto_issue_on_create => true` and every
+user created through a model using `HasPasswordPolicy` gets a temporary password issued and delivered right after
+the insert, replacing whatever password was passed to `create()` (supply any placeholder if the column is required).
+A missing channel or failed delivery never blocks the creation: the error is reported and audited, and you can
+re-issue later with `issueFor()`. To skip some users (e.g. self-registration), override on the model:
+
+```php
+public function shouldIssueTemporaryPassword(): bool
+{
+    return ! $this->self_registered;
+}
+```
+
 **Add your own channel** (e.g. WhatsApp, Slack DM):
 
 ```php
@@ -1295,6 +1308,8 @@ Default-এ history চালু এবং শেষ ৫টি password পু�
 #### ৫. Temporary password
 
 Administrator account তৈরি বা reset করলে `TemporaryPasswordService::issueFor()` random policy-compliant password বানিয়ে approved channel-এ পাঠায়; password কখনও return করে না এবং প্রথম login-এ change বাধ্যতামূলক হয়। Company email অগ্রাধিকার পায়, email না থাকলে registered phone; insecure fallback নেই। Valid channel না থাকলে `NoSecureChannelException`, delivery ব্যর্থ হলে `DeliveryFailedException` এবং transaction rollback হয়। Custom WhatsApp/Slack channel-এর জন্য `PasswordDeliveryChannel` implement করুন। Test/seeding-এর জন্য শুধু generate করা যায়, কিন্তু production delivery flow-তে plain password log করবেন না।
+
+**User তৈরির সময় স্বয়ংক্রিয়ভাবে (default-এ বন্ধ):** `temporary_password.auto_issue_on_create => true` দিলে `HasPasswordPolicy` ব্যবহারকারী model-এ নতুন user তৈরির সঙ্গে সঙ্গে temporary password issue ও deliver হয়। `create()`-এ দেওয়া password এটি প্রতিস্থাপন করে, তাই column বাধ্যতামূলক হলে যেকোনো placeholder দিন। Channel না থাকলে বা delivery ব্যর্থ হলে user তৈরি আটকায় না; error `report()` ও audit হয়, পরে `issueFor()` দিয়ে আবার পাঠানো যায়। কিছু user (যেমন নিজে registration করা) বাদ দিতে model-এ `shouldIssueTemporaryPassword()` override করুন।
 
 #### ৬. Account lockout
 
