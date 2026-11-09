@@ -24,7 +24,7 @@ return [
 
         // Reject passwords containing any of these words (case-insensitive),
         // e.g. the company name and common words.
-        'banned_words' => ['remark', 'remarkhb', 'password', 'welcome', 'admin', 'qwerty', 'letmein', 'changeme'],
+        'banned_words' => ['password', 'welcome', 'admin', 'qwerty', 'letmein', 'changeme'],
 
         // Reject trivial patterns: 4+ repeated characters (aaaa) and
         // 4+ character sequences (1234, abcd).
