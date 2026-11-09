@@ -1,5 +1,11 @@
 # mainul/password-policy
 
+**Language / ভাষা:** [English](#english-documentation) · [বাংলা](#বাংলা-ডকুমেন্টেশন)
+
+<a id="english-documentation"></a>
+
+## English Documentation
+
 A Laravel package for enforcing password and account security controls: validation rules, expiry, history,
 lockout, temporary passwords, MFA, audit logging, service accounts and a JSON API.
 
@@ -1190,3 +1196,219 @@ The suite uses Orchestra Testbench. In your own tests you can fake delivery and 
 ## License
 
 MIT
+
+---
+
+<a id="বাংলা-ডকুমেন্টেশন"></a>
+
+## বাংলা ডকুমেন্টেশন
+
+`mainul/password-policy` হলো Laravel-এর জন্য একটি প্যাকেজ, যা পাসওয়ার্ড ও অ্যাকাউন্ট নিরাপত্তার বিভিন্ন নিয়ন্ত্রণ বাস্তবায়ন করে: ভ্যালিডেশন রুল, মেয়াদ, ইতিহাস, লকআউট, অস্থায়ী পাসওয়ার্ড, MFA, অডিট লগ, সার্ভিস অ্যাকাউন্ট এবং JSON API।
+
+এর জন্য **PHP 8.2+** এবং **Laravel 10 থেকে 13** প্রয়োজন।
+
+> প্যাকেজটি প্রয়োজনীয় নিয়ন্ত্রণ সরবরাহ করে। তবে কিছু নিয়ন্ত্রণ কার্যকর করতে আপনার অ্যাপ্লিকেশনে middleware, login action এবং Gate যুক্ত করতে হবে। নিচের প্রতিটি অংশে তা ব্যাখ্যা করা হয়েছে। একই ফাইল অপ্রয়োজনীয়ভাবে বড় ও দুই ভাষার code block অসামঞ্জস্যপূর্ণ হয়ে যাওয়া এড়াতে executable code, command, route, configuration key এবং API payload উপরের English অংশে একবারই রাখা হয়েছে। প্রতিটি বাংলা অংশের নম্বর সংশ্লিষ্ট English অংশের সঙ্গে সরাসরি মিলে যায়।
+
+### সূচিপত্র
+
+1. [বৈশিষ্ট্য](#বৈশিষ্ট্য)
+2. [ইনস্টলেশন](#ইনস্টলেশন)
+3. [দ্রুত শুরু](#দ্রুত-শুরু)
+4. [বৈশিষ্ট্য নির্দেশিকা](#বৈশিষ্ট্য-নির্দেশিকা)
+5. [JSON API](#json-api-1)
+6. [Artisan command](#artisan-command)
+7. [Event](#event)
+8. [কনফিগারেশন](#কনফিগারেশন)
+9. [ব্যবহারের আগে গুরুত্বপূর্ণ বিষয়](#ব্যবহারের-আগে-গুরুত্বপূর্ণ-বিষয়)
+10. [নীতি-সম্মতি](#নীতি-সম্মতি)
+11. [পরীক্ষা, আপগ্রেড ও লাইসেন্স](#পরীক্ষা-আপগ্রেড-ও-লাইসেন্স)
+
+### বৈশিষ্ট্য
+
+- **Password rules:** দৈর্ঘ্য, বড়/ছোট অক্ষর, সংখ্যা, বিশেষ চিহ্ন, ব্যক্তিগত তথ্য, নিষিদ্ধ শব্দ এবং সহজ pattern পরীক্ষা করে। Admin-এর জন্য আরও কঠোর rule প্রযোজ্য।
+- **Password history:** সাম্প্রতিক পাসওয়ার্ড পুনরায় ব্যবহার বন্ধ করে।
+- **Temporary password:** নিরাপদ random password তৈরি করে অনুমোদিত email/SMS channel-এ পাঠায় এবং প্রথম login-এ পরিবর্তন বাধ্যতামূলক করে।
+- **Account lockout:** ধাপভিত্তিক lock period, administrator unlock এবং দ্রুত IP-based failure শনাক্ত করে।
+- **Password expiry:** ব্যবহারকারীকে পরিবর্তনের বার্তা দেয় এবং অতিরিক্ত মেয়াদোত্তীর্ণ account স্বয়ংক্রিয়ভাবে disable করে।
+- **Session termination:** password change, compromise বা offboarding-এর পরে web session ও API token শেষ করে।
+- **Audit ও monitoring:** security event record করে, secret মুছে রাখে এবং unusual login শনাক্ত করে।
+- **MFA:** built-in authenticator app (TOTP) অথবা custom driver সমর্থন করে।
+- **Reset protection:** one-time identity code এবং role-based reset restriction দেয়।
+- **Service account:** owner, purpose এবং vault-এর মাধ্যমে scheduled rotation পরিচালনা করে।
+- **Offboarding ও command:** চলে যাওয়া কর্মীর account disable, shared credential flag এবং diagnostic চালায়।
+- **JSON API:** mobile app ও SPA-এর জন্য HTTP interface দেয়; default Sanctum, Passport-ও সমর্থিত।
+
+### ইনস্টলেশন
+
+উপরের [Installation](#installation) অংশের command চালান। Service provider auto-discover হবে। ঐচ্ছিক package-গুলোর কাজ:
+
+| Package | ব্যবহার |
+|---|---|
+| `bacon/bacon-qr-code` | authenticator setup page-এ QR code দেখায়; না থাকলে key দেখায় |
+| `xenon/laravelbdsms` | company email না থাকলে SMS-এ temporary password/reset code পাঠায় |
+| `laravel/sanctum` | JSON API-এর default guard |
+| `laravel/passport` | বিকল্প API guard |
+
+Publish tag দিয়ে config, migration এবং MFA view প্রকাশ করা যায়। Migration `users` table-এ password state, lockout ও session-version column যোগ করে এবং history, audit, known login, reset code, service account, MFA credential ও runtime setting-এর table তৈরি করে। `users` table-এর নাম নির্দিষ্ট। পুরোনো user যেন সঙ্গে সঙ্গে expired না হয়, তাই migration-এর সময় তাদের `password_changed_at` বসানো হয়।
+
+### দ্রুত শুরু
+
+সাধারণ Laravel app-এ ন্যূনতম ছয়টি integration দরকার:
+
+1. **User model:** `HasPasswordPolicy` trait ব্যবহার করুন এবং `password`, `remember_token` hidden রাখুন। Trait history সংরক্ষণ, change time লেখা, forced-change flag, অন্য session বন্ধ এবং audit entry তৈরি করে। Model অন্য namespace-এ থাকলে `password-policy.user_model` বদলান।
+2. **Route:** authenticated route-এ `password.account_active`, `password.session_version`, `password.expiry`, `password.force_change` ও `password.mfa` middleware দিন। Password change ও logout route-কে excluded route হিসেবে reachable রাখুন। Login/reset route-এ `password.secure`; restricted self-reset route-এ `password.block_self_reset` দিন।
+3. **Login action:** credential পরীক্ষা করার **আগে** `LoginGuard::ensureCanAttempt()` চালান। Locked, disabled ও expired account-এর জন্য user-কে একই generic message দেখান। Laravel-এর `Failed` ও `Login` event counter ও audit স্বয়ংক্রিয়ভাবে চালায়।
+4. **Password change form:** `CurrentPasswordRule`, `PasswordPolicyRule::for($user)` এবং `PasswordNotReusedRule` ব্যবহার করুন। Field-এর সঙ্গে `required`-ও দিন। Trait update-এর পর বাকি security কাজ করে।
+5. **Schedule:** `password-policy:disable-expired` দৈনিক স্বয়ংক্রিয়ভাবে schedule হয়। Service-account notification/rotation command নিজে schedule করুন।
+6. **Gate:** audit log এবং API admin access default-এ সবার জন্য denied। উপরের English example অনুযায়ী Gate define করুন।
+
+Middleware alias-গুলোর উদ্দেশ্য:
+
+| Alias | কাজ |
+|---|---|
+| `password.expiry` | expired password হলে redirect অথবা JSON `403` |
+| `password.force_change` | temporary password বদলানো পর্যন্ত অন্য কাজ block |
+| `password.account_active` | disabled/overdue account logout |
+| `password.session_version` | পুরোনো session invalid |
+| `password.mfa` | দ্বিতীয় factor বাধ্যতামূলক |
+| `password.secure` | HTTPS নিশ্চিত এবং URL query-তে secret বন্ধ |
+| `password.block_self_reset` | restricted role-এর self-reset বন্ধ |
+
+### বৈশিষ্ট্য নির্দেশিকা
+
+#### ১. Password rule
+
+`PasswordPolicyRule` `password-policy.rules` config অনুযায়ী minimum length, character class, personal information, banned word এবং repeated/sequential pattern পরীক্ষা করে। User দিলে admin profile ও personal-info check প্রযোজ্য; user না দিলে global rule চলে এবং personal-info check বাদ যায়। Registration-এ `password_policy` string alias ব্যবহার করা যায়। Custom validation message lang file-এ দিন। Company name বা প্রচলিত দুর্বল শব্দ `rules.banned_words`-এ যোগ করুন। Birthdate/name/email/phone field-এর mapping `columns.*` থেকে আসে। Tinker example উপরের [Password rules](#1-password-rules) অংশে আছে।
+
+#### ২. Password history
+
+Default-এ history চালু এবং শেষ ৫টি password পুনঃব্যবহার নিষিদ্ধ। Password বদলালে trait পুরোনো hash `password_histories`-এ রাখে; `PasswordNotReusedRule` নতুন plain password-কে শেষ Nটি hash-এর সঙ্গে পরীক্ষা করে। Admin-এর জন্য `admin.history_count` প্রযোজ্য এবং কঠোরতর মানটি নেওয়া হয়। Programmatic check-এর জন্য `$user->hasUsedPassword(...)` ব্যবহার করুন।
+
+#### ৩. Current-password confirmation
+
+স্বেচ্ছায় password বদলাতে বর্তমান password জানা প্রমাণ করতে `CurrentPasswordRule` ব্যবহার করুন। Temporary password বা expired password-এর বাধ্যতামূলক change-এ config অনুযায়ী rule skip হতে পারে। Administrator অন্যের password reset করলে rule প্রয়োগ করবেন না। Forced flow-তে `current_password` field-কে নিঃশর্ত `required` করবেন না।
+
+#### ৪. Password expiry
+
+`expiry.enabled`, `days`, `grace_days` ও `auto_disable` দিয়ে নিয়ন্ত্রণ করুন। `password.expiry` middleware expired user-কে change page-এ পাঠায় বা JSON `403 password_expired` দেয়। Grace period পার হলে scheduler, command অথবা middleware account disable করতে পারে। `PasswordExpiryService` দিয়ে expired/disable-due পরীক্ষা এবং `ExpiredAccountSweeper` দিয়ে dry run বা sweep করা যায়। Service account expiry নয়, rotation schedule অনুসরণ করে।
+
+#### ৫. Temporary password
+
+Administrator account তৈরি বা reset করলে `TemporaryPasswordService::issueFor()` random policy-compliant password বানিয়ে approved channel-এ পাঠায়; password কখনও return করে না এবং প্রথম login-এ change বাধ্যতামূলক হয়। Company email অগ্রাধিকার পায়, email না থাকলে registered phone; insecure fallback নেই। Valid channel না থাকলে `NoSecureChannelException`, delivery ব্যর্থ হলে `DeliveryFailedException` এবং transaction rollback হয়। Custom WhatsApp/Slack channel-এর জন্য `PasswordDeliveryChannel` implement করুন। Test/seeding-এর জন্য শুধু generate করা যায়, কিন্তু production delivery flow-তে plain password log করবেন না।
+
+#### ৬. Account lockout
+
+Default tiered lockout consecutive failure-এর পরে ৫, ১০ ও ৩০ মিনিট; পরেরগুলো ১২০ মিনিট ও identity verification চাইতে পারে। একই account-এ এক IP থেকে ৬০ সেকেন্ডে ৫ failure হলে default-এ administrator unlock না করা পর্যন্ত permanent lock হয়। Login credential check-এর আগে `LoginGuard` ব্যবহার করতে হবে। UI-তে generic error দেখান; internal log-এ exception-এর `reason` ও `retryAfterSeconds` রাখা যায়। `LockoutService` state দেখা, manual lock ও verified unlock সমর্থন করে। CLI unlock নেই; service বা admin API ব্যবহার করুন।
+
+#### ৭. Disable, enable ও compromised account
+
+`AccountService::disable()` login block ও session শেষ করে। `enable()` account চালু করে কিন্তু password change বাধ্যতামূলক করে। `markCompromised()` password unusable করে, সব session/token শেষ করে, change force করে এবং `PasswordCompromised` event পাঠায়। Identity verify করার পরে temporary password issue করুন।
+
+#### ৮. Session termination
+
+Password বদলালে trait user-এর অন্য web session ও API token শেষ করে; যে session change করেছে সেটি চালু থাকে। `sessions.terminate_on_password_change = false` দিয়ে বন্ধ করা যায়। `SessionTerminator` সব session অথবা current session রেখে বাকিগুলো শেষ করতে পারে। এটি `session_version` বাড়ায়, database session পরিষ্কার করে এবং Sanctum/Passport token মুছে দেয়; route-এ `password.session_version` middleware থাকা জরুরি।
+
+#### ৯. Password reset protection
+
+`reset.restricted_roles`, `role_attribute` অথবা custom `role_resolver` দিয়ে BA/SO-এর মতো role-এর self-reset বন্ধ করুন। Forgot-password route-এ middleware বা `CanSelfResetPassword` rule দিন। স্বাধীন পরিচয় যাচাইয়ের জন্য `ResetIdentityVerifier` একবার ব্যবহারযোগ্য code company email বা phone-এ পাঠায়; default ১০ মিনিট মেয়াদ, ৫টি ভুল চেষ্টার পরে lock। সফল reset-এর পরে Laravel `PasswordReset` event পাঠালে audit ও password-reset notice হয়; notice-এ password থাকে না। `password-policy:check` broker link expiry সর্বোচ্চ ৬০ মিনিটের মধ্যে আছে কি না পরীক্ষা করে।
+
+#### ১০. Authenticator-app MFA (TOTP)
+
+Google/Microsoft Authenticator, Authy ইত্যাদির ৬-digit code দ্বিতীয় factor হিসেবে ব্যবহার করা যায়। এটি default-এ বন্ধ। Enable করলে scope অনুযায়ী প্রয়োজনীয় হয় এবং app না থাকা user setup page-এ যায়। Bundled route/view ব্যবহার করতে `totp.routes` চালু করে `password.mfa` middleware দিন; অথবা `TotpEnrollmentService` ও `MfaService` দিয়ে নিজস্ব UI বানান। Enrollment secret/URI দেখিয়ে code confirm করুন; recovery code মাত্র একবার দেখান। Challenge TOTP বা recovery code গ্রহণ করে এবং ভুল code lockout count বাড়ায়।
+
+`password_policy_settings` table-এর `totp.enabled`, `scope`, `grace_days`, `issuer` config-কে override করে; command বা admin API দিয়ে audited change করা যায়। Code-এ policy pin করতে `totp.enabled` ও `totp.lock_to_config` দুটোই true করুন। Scope `all`, `admins` বা trusted network-এর বাইরে `remote`; admin-এর MFA সবসময় প্রয়োজন। Secret `APP_KEY` দিয়ে encrypted, recovery code keyed hash, replay blocked, সফল verify-তে session ID renew হয়। `APP_KEY` বদলালে পুরোনো secret পড়া যাবে না। Settings table unavailable হলে config fallback ব্যবহৃত হয়।
+
+#### ১১. Custom MFA driver
+
+SMS, email OTP বা push দরকার হলে `MfaDriver` implement করে `mfa.driver`-এ class দিন; custom driver built-in driver-এর আগে প্রাধান্য পায়। Admin সবসময়, `require_remote` হলে trusted network-এর বাইরের user, এবং `require_all` হলে সবাই MFA ব্যবহার করবে। Factor না থাকলে fail-closed হিসেবে access block হবে। External driver থাকলে built-in enrollment endpoint `404 mfa_external_driver` দেয়, কারণ enrollment host driver-এর দায়িত্ব। OTP single-use ও স্বল্পমেয়াদি রাখুন।
+
+#### ১২. Admin account
+
+`admin.roles` অথবা truthy `admin.flag_attribute` দিয়ে admin শনাক্ত হয়। Global ও admin config-এর মধ্যে কঠোরতর minimum length, expiry ও history মান প্রয়োগ হয়। Default example-এ ১৪+ character, ৬০ দিনের expiry ও ৫ password history আছে। `daily_email_domains`-এ থাকা সাধারণ-use email দিয়ে admin login করলে `password-policy:check` তা flag করে, যাতে privileged ও দৈনন্দিন account পৃথক রাখা যায়।
+
+#### ১৩. Service account ও rotation
+
+Bot/integration account-এর named owner, purpose ও rotation schedule থাকা দরকার এবং interactive login করা উচিত নয়। `ServiceAccountService` register, update, due list, notification, vault rotation ও remove সমর্থন করে। `knownBy`-তে যাদের user ID আছে, তাদের কাউকে offboard করলে account অবিলম্বে rotation-due হয়। Package secret রাখে বা return করে না; configured vault callback না থাকলে rotation প্রত্যাখ্যান করে এবং vault ব্যর্থ হলে database change rollback করে। `rotation-due` command দিয়ে list, notify বা rotate করুন।
+
+#### ১৪. কর্মী offboarding
+
+`password-policy:offboard` command অথবা `OffboardingService` একই দিনে account disable করে, সব session/token শেষ করে এবং ব্যক্তি যে service-account password জানতেন সেগুলো rotation-due করে। Returned collection-এর প্রতিটি account vault-এর মাধ্যমে rotate করুন।
+
+#### ১৫. Audit log
+
+Login, failure, lockout, password change/reset, MFA ও admin action `password_audit_logs`-এ লেখা হয়। `audit.redact_keys`-এর password, token, code, OTP ইত্যাদি secret redacted থাকে। পড়ার access default-এ denied; `view-password-audit-logs` Gate define করুন। Model দিয়ে query, `AuditLogger` দিয়ে custom entry এবং Artisan command দিয়ে filter করা যায়। Application log-এর জন্য `RedactSensitiveData` tap যোগ করুন; array পরিষ্কারে `Redactor::redact()` আছে।
+
+#### ১৬. Unusual-login detection
+
+নির্ধারিত সময়ে failure threshold পার হলে, নতুন IPv4 /24 বা IPv6 /48 network থেকে সফল login হলে, অথবা resolver থাকলে নতুন country থেকে login হলে alert হয়। প্রথম login শুধু baseline তৈরি করে। Alert audit হয়, configured recipient-কে email যায় এবং `UnusualLoginDetected` event dispatch হয়। Country check-এর জন্য নিজের `GeoResolver` দিন; package কোনো external geo service bundle করে না।
+
+#### ১৭. নিরাপদ HTTPS transport
+
+`password.secure` non-HTTPS request এবং query string-এ password/current_password-এর মতো secret প্রত্যাখ্যান করে। Default-এ কেবল `APP_ENV=production`-এ সক্রিয়; `tls.enforce` দিয়ে force on/off করা যায়। Login, password ও reset route-এ middleware দিন। Proxy/load balancer-এর পেছনে Laravel trusted proxy সঠিকভাবে configure করুন, যাতে `$request->secure()` যথার্থ ফল দেয়।
+
+#### ১৮. Default-password scan
+
+Go-live-এর আগে `defaults.passwords`-এ vendor/default password যোগ করে `password-policy:check-defaults` চালান। `--flag` matching user-কে password change-এ বাধ্য করে; `--user` একটি user পরীক্ষা করে। প্রতিটি candidate প্রতিটি user-এর hash-এর সঙ্গে যাচাই হওয়ায় বড় database-এ এটি ধীর—off-peak সময়ে চালান।
+
+### JSON API
+
+Mobile app, SPA ও service-এর জন্য একই feature HTTP-তে পাওয়া যায়। API default-এ বন্ধ; `api.enabled` config বা runtime setting চালু না করা পর্যন্ত route `404` দেয়। Default guard `sanctum`; Passport ব্যবহার করলে passport driver-এর guard দিন। Guard list দিলে ক্রমানুসারে চেষ্টা হয়। Database setting প্রতি request-এ config-কে override করে।
+
+Admin endpoint-এর Gate default-এ সবাইকে deny করে। Manage users, service accounts, settings, compliance ও audit-এর Gate define করুন। Default-এ admin route expiry, forced-change ও MFA middleware-এর পেছনে থাকে। Prefix default `/api/password-policy`; error সাধারণত `message`/`error` অথবা Laravel validation `errors` format-এ আসে। Anonymous ও secret-checking endpoint আলাদা throttle ব্যবহার করে।
+
+Endpoint group-গুলোর সারাংশ:
+
+| Group | কাজ |
+|---|---|
+| `login/check`, `reset/*` | anonymous pre-login check ও one-time-code reset |
+| `policy`, `password/*` | বর্তমান policy/status, validation ও password change |
+| `mfa/*` | status, enrollment, challenge, verification ও recovery code |
+| `admin/users/*` | state, known login, lock/unlock, disable/enable, compromise, temporary password, session termination, offboarding ও MFA reset |
+| `admin/service-accounts/*` | list, register, update, remove, rotate ও notification |
+| `admin/settings` | database override পরিচালনা |
+| `admin/audit`, `admin/compliance/*` | audit query, self-test ও default-password scan |
+
+সম্পূর্ণ method/path, request field, response, curl flow এবং mobile MFA example উপরের [Endpoints](#endpoints) ও [Examples](#examples) অংশে আছে। API token-এর MFA verification cache-এ token-ভিত্তিকভাবে default ১২ ঘণ্টা থাকে; বহু server-এ shared cache ব্যবহার করুন। Reset code user-dependent check-এর আগে spent হয়, তাই failed attempt-এর পরে নতুন code চাইতে হবে। Login action নিজে এবং Laravel reset-link flow এই API-এর অংশ নয়।
+
+### Artisan command
+
+| Command | উদ্দেশ্য |
+|---|---|
+| `password-policy:check` | hashing, hidden password, HTTPS, reset expiry, MFA, admin separation, SMS dependency ও enrollment self-test; CI/deploy-এ চালান |
+| `password-policy:check-defaults` | পরিচিত default password খুঁজে flag করে |
+| `password-policy:disable-expired` | grace period পার হওয়া account dry-run/disable করে |
+| `password-policy:rotation-due` | overdue service account list, notify বা rotate করে |
+| `password-policy:offboard` | কর্মীর account disable ও shared password rotation flag করে |
+| `password-policy:totp` | authenticator policy enable/disable/status/scope/reset পরিচালনা করে |
+| `password-policy:audit` | সাম্প্রতিক audit entry filter করে দেখায় |
+
+### Event
+
+- `AccountLocked`: account lock হলে `user`, `reason`, `level`, `minutes` দেয়।
+- `PasswordCompromised`: `markCompromised()` চললে `user`, `reportedBy` দেয়।
+- `UnusualLoginDetected`: repeated failure/new network/new country হলে `user`, `identifier`, `reasons`, `ip` দেয়।
+
+Listener দিয়ে Slack/SOC alert বা নিজস্ব logging করা যায়। Package Laravel-এর `Login`, `Failed`, `Lockout` ও `PasswordReset` event-ও শোনে।
+
+### কনফিগারেশন
+
+সব option `config/password-policy.php`-এ inline documented। প্রধান group: `rules`, `expiry`, `history`, `lockout`, `temporary_password`, `reset`, `anomaly`, `tls`, `audit`, `mfa`, `totp`, `api`, `admin`, `service_accounts`, `defaults`, `sessions`, `columns`, `current_password`, `middleware`, `user_model`। Relaxed rule, custom column, role-based admin detection এবং feature off করার recipe উপরের [Configuration](#configuration) অংশে আছে। `tls.enforce = null` শুধু production-এ HTTPS enforce করে; সব environment-এ চালাতে true, বন্ধ করতে false দিন।
+
+### ব্যবহারের আগে গুরুত্বপূর্ণ বিষয়
+
+- **Shared cache:** IP burst, repeated failure ও API MFA state cache-এ থাকে। বহু server-এ Redis/database ব্যবহার করুন; `array`/`file` নয়।
+- **Lockout wording:** policy-র কিছু শব্দের বাস্তবায়ন configurable interpretation। Default IP burst খুব কঠোর হতে পারে; প্রয়োজনে attempt বাড়ান।
+- **MFA factor:** built-in TOTP বা custom driver চালু না থাকলে MFA-required user block হবে।
+- **Self-reset disclosure:** restricted role-এর response account/role আছে বলে ইঙ্গিত দিতে পারে; unknown email স্বাভাবিক response পায়।
+- **Synchronous delivery:** temporary password, reset notice ও alert inline পাঠানো হয়, queued নয়।
+- **Admin default:** ১৪ character, ৬০-day expiry ও ৫-history একটি default assumption।
+- **Code-এর বাইরে:** password share/লিখে রাখা, অন্য system-এ reuse, browser save এবং একই ব্যক্তির admin/daily password আলাদা রাখা package দিয়ে পুরোপুরি enforce করা যায় না।
+- **`APP_KEY`:** TOTP secret এটি দিয়ে encrypted; অসতর্কভাবে rotate করবেন না।
+
+### নীতি-সম্মতি
+
+Status legend: ✅ package-এ সম্পূর্ণ · 🔌 host application wiring/implementation দরকার · 🛡 Laravel বাস্তবায়ন করে, package যাচাই বা সম্পূরক নিয়ন্ত্রণ দেয় · ➖ business process/package-এর বাইরের বিষয়। Clause 3.1–3.9-এর পূর্ণ requirement, status ও implementation mapping উপরের [Policy compliance](#policy-compliance) table-এ অপরিবর্তিতভাবে রাখা হয়েছে, যাতে audit reference ও clause number একটিই authoritative source থাকে। প্রধান wiring dependency হলো middleware, login guard, Gate, MFA driver, vault এবং trusted proxy; business form/approval ও human password আচরণ application package-এর বাইরে।
+
+### পরীক্ষা, আপগ্রেড ও লাইসেন্স
+
+`composer install` এবং `vendor/bin/phpunit` চালিয়ে test করুন। Suite Orchestra Testbench ব্যবহার করে; delivery, MFA ও Geo resolver-এর fake class `tests/Support`-এ example হিসেবে আছে। প্রতিটি update-এর পরে migration চালান। নতুন config option পেতে publish/merge করুন; `--force` existing edit overwrite করে, তাই আগে diff করুন। নতুন কঠোর default পরবর্তী password change-এ প্রযোজ্য—পুরোনো behavior রাখতে published config-এ পুরোনো মান স্পষ্টভাবে দিন। পরিবর্তনের তালিকা [CHANGELOG.md](CHANGELOG.md)-এ। License: MIT।
