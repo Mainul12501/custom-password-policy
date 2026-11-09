@@ -102,7 +102,7 @@ return [
     'reset' => [
         'max_expire_minutes'  => 60,
         'notify'              => true,
-        'restricted_roles'    => ['BA', 'SO'],
+        'restricted_roles'    => ['BA', 'SO'], // set listed role names, which won't follow password rules
         'role_attribute'      => 'role',
         'role_resolver'       => null,
         'verifier'            => \Mainul\PasswordPolicy\Services\ResetCodeVerifier::class,
@@ -152,6 +152,19 @@ return [
     | require_all:     require it for every user (standard accounts, 3.4.4).
     |
     | With no driver configured, users who need MFA are blocked (fail closed).
+    |
+    | Supported drivers (`driver`):
+    |   null                                      Uses the bundled TotpDriver when
+    |                                             `totp.enabled` is true; otherwise
+    |                                             no factor (fail closed, see above).
+    |   \Mainul\PasswordPolicy\Mfa\TotpDriver::class
+    |                                             Authenticator app (Google / Microsoft
+    |                                             Authenticator, Authy...) with
+    |                                             recovery codes. The only driver
+    |                                             bundled with the package.
+    |   YourClass::class                          Any custom class implementing
+    |                                             Contracts\MfaDriver (SMS code,
+    |                                             push, email OTP...).
     |
     */
     'mfa' => [
