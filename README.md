@@ -40,12 +40,13 @@ Requires **PHP 8.2+** and **Laravel 10 to 13**.
    - [17. Secure transport (HTTPS)](#17-secure-transport-https)
    - [18. Default-password scan](#18-default-password-scan)
 5. [JSON API](#json-api)
-6. [Artisan commands](#commands)
-7. [Events](#events)
-8. [Configuration reference](#configuration)
-9. [Things to know before relying on it](#things-to-know-before-relying-on-it)
-10. [Policy compliance](#policy-compliance)
-11. [Testing](#testing) · [Upgrading](#upgrading) · [License](#license)
+6. [Complete example: fresh Laravel project (MVC)](#complete-example)
+7. [Artisan commands](#commands)
+8. [Events](#events)
+9. [Configuration reference](#configuration)
+10. [Things to know before relying on it](#things-to-know-before-relying-on-it)
+11. [Policy compliance](#policy-compliance)
+12. [Testing](#testing) · [Upgrading](#upgrading) · [License](#license)
 
 ## Features
 
@@ -1041,6 +1042,813 @@ curl -X PUT .../admin/settings -H "Authorization: Bearer $ADMIN_TOKEN" \
 - **Not part of the API**: the login action itself (use `login/check` before yours) and the Laravel reset-*link*
   flow (the API's own reset applies the same restricted-role rule).
 
+<a id="complete-example"></a>
+
+## Complete example (fresh Laravel project, MVC)
+
+A copy-and-paste walkthrough that uses **every feature** in a brand-new Laravel 11/12/13 app with no starter kit.
+It follows MVC: **Models** (`User`), **Views** (Blade), **Controllers** (thin) and Form Requests. Business logic
+stays in the package services. File paths are relative to the project root. Do the steps in order.
+
+### Step 1. Create the project and install
+
+```bash
+composer create-project laravel/laravel acme-portal
+cd acme-portal
+composer require mainul/password-policy laravel/sanctum bacon/bacon-qr-code
+php artisan vendor:publish --tag=password-policy-config
+```
+
+Set the database and mail in `.env`, then use a shared cache store if you run more than one server:
+
+```dotenv
+DB_CONNECTION=mysql
+DB_DATABASE=acme_portal
+MAIL_MAILER=log            # use smtp in production; temporary passwords are delivered by mail
+SESSION_DRIVER=database    # lets the package end a user's other sessions
+CACHE_STORE=database       # shared store for lockout/MFA counters (Redis on a cluster)
+```
+
+### Step 2. Migrations
+
+The package migrations are loaded automatically. Add your own columns the package reads (`role`, `phone`,
+`date_of_birth`). Give the file a name that sorts **after** Laravel's `create_users_table`:
+
+```bash
+php artisan make:migration add_profile_columns_to_users_table --table=users
+```
+
+```php
+// database/migrations/xxxx_add_profile_columns_to_users_table.php
+public function up(): void
+{
+    Schema::table('users', function (Blueprint $table) {
+        $table->string('role')->default('USER')->after('email');   // USER, ADMIN, BA, SO, SECURITY
+        $table->string('phone')->nullable()->after('role');        // SMS fallback for temporary passwords
+        $table->date('date_of_birth')->nullable()->after('phone'); // personal-info check
+    });
+}
+```
+
+```bash
+php artisan migrate
+```
+
+### Step 3. Configuration
+
+Edit `config/password-policy.php` (only the keys below differ from the defaults):
+
+```php
+'admin'  => ['roles' => ['ADMIN'], 'flag_attribute' => null],
+'reset'  => ['restricted_roles' => ['BA', 'SO'], 'role_attribute' => 'role'],
+'totp'   => ['routes' => true, 'enabled' => false],            // flip on later with the command in Step 11
+'api'    => ['enabled' => true, 'guard' => 'sanctum'],
+'anomaly' => ['alert_recipients' => ['security@acme.com']],
+'service_accounts' => [
+    'vault'             => \App\Security\VaultWriter::class,
+    'notify_recipients' => ['security@acme.com'],
+],
+'temporary_password' => ['company_email_domains' => ['acme.com']],
+```
+
+`totp.routes => true` registers `mfa/enroll`, `mfa/challenge` and `mfa/recovery-codes` with ready-made pages, so
+you do not write MFA controllers or views. Laravel 11+ also needs API routes installed for the JSON API:
+`php artisan install:api`.
+
+### Step 4. Model: `app/Models/User.php`
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
+use Mainul\PasswordPolicy\Traits\HasPasswordPolicy;
+
+class User extends Authenticatable
+{
+    use HasApiTokens, HasFactory, Notifiable, HasPasswordPolicy;
+
+    protected $fillable = ['name', 'email', 'password', 'role', 'phone', 'date_of_birth'];
+
+    protected $hidden = ['password', 'remember_token'];
+
+    protected function casts(): array
+    {
+        return ['email_verified_at' => 'datetime', 'password' => 'hashed', 'date_of_birth' => 'date'];
+    }
+
+    public function isSecurityOfficer(): bool
+    {
+        return in_array($this->role, ['SECURITY', 'ADMIN'], true);
+    }
+
+    // Self-registered users choose their own password: no temporary password for them.
+    public function shouldIssueTemporaryPassword(): bool
+    {
+        return false;
+    }
+}
+```
+
+> On Laravel 10 remove the `casts()` method, use `protected $casts = [...]` and keep `Hash::make()` in the
+> controllers below. On 11+ `Hash::make()` is still safe: the `hashed` cast never double-hashes.
+
+### Step 5. Routes: `routes/web.php`
+
+```php
+<?php
+
+use App\Http\Controllers\Admin\AuditLogController;
+use App\Http\Controllers\Admin\UserController as AdminUserController;
+use App\Http\Controllers\Auth\ForgotPasswordController;
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\PasswordController;
+use App\Http\Controllers\Auth\RegisterController;
+use App\Http\Controllers\DashboardController;
+use Illuminate\Support\Facades\Route;
+
+Route::redirect('/', '/login');
+
+// Public: HTTPS-only, no secrets in the URL (3.3)
+Route::middleware(['guest', 'password.secure'])->group(function () {
+    Route::get('/login', [LoginController::class, 'create'])->name('login');
+    Route::post('/login', [LoginController::class, 'store']);
+    Route::get('/register', [RegisterController::class, 'create'])->name('register');
+    Route::post('/register', [RegisterController::class, 'store']);
+
+    // Restricted roles (BA, SO) are blocked from self-service reset (3.6.6)
+    Route::get('/forgot-password', [ForgotPasswordController::class, 'create'])->name('password.request');
+    Route::post('/forgot-password', [ForgotPasswordController::class, 'store'])
+        ->middleware('password.block_self_reset')->name('password.email');
+    Route::post('/reset-password', [ForgotPasswordController::class, 'update'])->name('password.reset.store');
+});
+
+// Signed in, but must stay reachable even when the password is expired/temporary
+Route::middleware(['auth', 'password.secure'])->group(function () {
+    Route::post('/logout', [LoginController::class, 'destroy'])->name('logout');
+    Route::get('/password/change', [PasswordController::class, 'edit'])->name('password.change');
+    Route::put('/password', [PasswordController::class, 'update'])->name('password.update');
+});
+
+// Everything else: full policy stack, in this order
+Route::middleware(['auth', 'password.account_active', 'password.session_version',
+                   'password.expiry', 'password.force_change', 'password.mfa'])->group(function () {
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
+
+    Route::prefix('admin')->name('admin.')->middleware('can:password-policy.manage-users')->group(function () {
+        Route::get('users', [AdminUserController::class, 'index'])->name('users.index');
+        Route::post('users', [AdminUserController::class, 'store'])->name('users.store');
+        Route::post('users/{user}/temporary-password', [AdminUserController::class, 'temporaryPassword'])->name('users.temp');
+        Route::post('users/{user}/lock', [AdminUserController::class, 'lock'])->name('users.lock');
+        Route::post('users/{user}/unlock', [AdminUserController::class, 'unlock'])->name('users.unlock');
+        Route::post('users/{user}/disable', [AdminUserController::class, 'disable'])->name('users.disable');
+        Route::post('users/{user}/enable', [AdminUserController::class, 'enable'])->name('users.enable');
+        Route::post('users/{user}/compromised', [AdminUserController::class, 'compromised'])->name('users.compromised');
+        Route::post('users/{user}/offboard', [AdminUserController::class, 'offboard'])->name('users.offboard');
+    });
+
+    Route::get('admin/audit', AuditLogController::class)->middleware('can:view-password-audit-logs')->name('admin.audit');
+});
+```
+
+The route names `password.change`, `password.update` and `logout` match the package's default
+`middleware.excluded_routes`, so the expiry and forced-change checks do not trap the user in a redirect loop.
+
+### Step 6. Controllers
+
+**Login** (account lockout, disabled/expired accounts, generic message): `app/Http/Controllers/Auth/LoginController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Mainul\PasswordPolicy\Exceptions\AccountLockedException;
+use Mainul\PasswordPolicy\Services\LoginGuard;
+
+class LoginController extends Controller
+{
+    public function create()
+    {
+        return view('auth.login');
+    }
+
+    public function store(Request $request, LoginGuard $guard)
+    {
+        $credentials = $request->validate(['email' => ['required', 'email'], 'password' => ['required']]);
+
+        try {
+            $guard->ensureCanAttempt($credentials['email']);   // BEFORE checking the password
+        } catch (AccountLockedException $e) {
+            // Same message for locked, disabled and expired accounts. $e->reason stays server-side.
+            return back()->withErrors(['email' => $e->getMessage()])->onlyInput('email');
+        }
+
+        if (! Auth::attempt($credentials, $request->boolean('remember'))) {
+            // The package's Failed listener counts this toward lockout and the audit log.
+            return back()->withErrors(['email' => 'These credentials do not match our records.'])->onlyInput('email');
+        }
+
+        $request->session()->regenerate();
+
+        // password.force_change / password.expiry / password.mfa take over from here.
+        return redirect()->intended(route('dashboard'));
+    }
+
+    public function destroy(Request $request)
+    {
+        Auth::logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return redirect('/login');
+    }
+}
+```
+
+**Registration** (no user yet, so the string alias `password_policy` is used): `app/Http/Controllers/Auth/RegisterController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Mainul\PasswordPolicy\Rules\PasswordPolicyRule;
+
+class RegisterController extends Controller
+{
+    public function create()
+    {
+        return view('auth.register');
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'name'          => ['required', 'string', 'max:255'],
+            'email'         => ['required', 'email', 'unique:users'],
+            'date_of_birth' => ['nullable', 'date'],
+            'password'      => ['required', 'confirmed', 'password_policy'],
+        ]);
+
+        $user = User::create([...$data, 'password' => Hash::make($data['password'])]);
+
+        // Re-check now that a user exists: this adds the personal-information test (name, email, birthdate).
+        if (! (new PasswordPolicyRule($user))->passes('password', $data['password'])) {
+            $user->delete();
+
+            return back()->withErrors(['password' => 'The password must not contain your personal information.'])
+                ->onlyInput('name', 'email');
+        }
+
+        Auth::login($user);
+
+        return redirect()->route('dashboard');
+    }
+}
+```
+
+**Change password** (current password, rules, no reuse, history, session termination): `app/Http/Controllers/Auth/PasswordController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Mainul\PasswordPolicy\Rules\{CurrentPasswordRule, PasswordNotReusedRule, PasswordPolicyRule};
+
+class PasswordController extends Controller
+{
+    public function edit(Request $request)
+    {
+        $user = $request->user();
+
+        return view('auth.change-password', [
+            'forced'      => $user->mustChangePassword(),
+            'expired'     => $user->passwordExpired(),
+            // The current password is not asked for system-forced changes (temporary/expired password).
+            'needCurrent' => ! $user->mustChangePassword() && ! $user->passwordExpired(),
+        ]);
+    }
+
+    public function update(Request $request)
+    {
+        $user = $request->user();
+        $currentRule = new CurrentPasswordRule($user);
+
+        $request->validate([
+            'current_password' => $currentRule->passes('current_password', '') ? [] : ['required', $currentRule],
+            'password' => ['required', 'confirmed',
+                PasswordPolicyRule::for($user),        // admins get the stricter rules
+                new PasswordNotReusedRule($user)],     // last N passwords are rejected
+        ]);
+
+        // The trait saves history, stamps password_changed_at, clears must_change_password,
+        // ends the OTHER sessions/tokens and writes the audit entry.
+        $user->update(['password' => Hash::make($request->password)]);
+
+        return redirect()->route('dashboard')->with('status', 'Password changed.');
+    }
+}
+```
+
+**Forgot / reset password** (Laravel's broker + restricted roles + independent one-time code): `app/Http/Controllers/Auth/ForgotPasswordController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Mainul\PasswordPolicy\Contracts\ResetIdentityVerifier;
+use Mainul\PasswordPolicy\Rules\{PasswordNotReusedRule, PasswordPolicyRule};
+
+class ForgotPasswordController extends Controller
+{
+    public function create()
+    {
+        return view('auth.forgot-password');
+    }
+
+    // Step 1: BA/SO never reach this method (password.block_self_reset on the route).
+    public function store(Request $request, ResetIdentityVerifier $verifier)
+    {
+        $request->validate(['email' => ['required', 'email']]);
+
+        Password::sendResetLink($request->only('email'));      // link expires per config/auth.php (<= 60 min)
+
+        if ($user = User::where('email', $request->email)->first()) {
+            $verifier->issue($user);                           // one-time code to company email, else phone
+        }
+
+        // Identical answer for known and unknown emails.
+        return back()->with('status', 'If the account exists, a reset link and a verification code were sent.');
+    }
+
+    // Step 2: link token + one-time code + new password
+    public function update(Request $request, ResetIdentityVerifier $verifier)
+    {
+        $user = User::where('email', $request->email)->first();
+
+        $request->validate([
+            'token' => ['required'], 'email' => ['required', 'email'], 'code' => ['required'],
+            'password' => ['required', 'confirmed', PasswordPolicyRule::for($user), new PasswordNotReusedRule($user)],
+        ]);
+
+        if (! $user || ! $verifier->verify($user, $request->code)) {      // single use, 10 min, max 5 tries
+            return back()->withErrors(['code' => 'Invalid or expired code.']);
+        }
+
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function (User $u, string $password) {
+                $u->update(['password' => Hash::make($password)]);
+                event(new PasswordReset($u));   // audit entry + "your password was reset" notice
+            }
+        );
+
+        return $status === Password::PASSWORD_RESET
+            ? redirect()->route('login')->with('status', 'Password reset.')
+            : back()->withErrors(['email' => __($status)]);
+    }
+}
+```
+
+**Dashboard**: `app/Http/Controllers/DashboardController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+
+class DashboardController extends Controller
+{
+    public function __invoke(Request $request)
+    {
+        return view('dashboard', ['user' => $request->user()]);
+    }
+}
+```
+
+**Admin users** (temporary passwords, lock/unlock, disable/enable, compromise, offboarding): `app/Http/Controllers/Admin/UserController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+use Mainul\PasswordPolicy\Exceptions\{DeliveryFailedException, NoSecureChannelException};
+use Mainul\PasswordPolicy\Services\{AccountService, LockoutService, OffboardingService, ServiceAccountService, TemporaryPasswordService};
+
+class UserController extends Controller
+{
+    public function index(LockoutService $lockout)
+    {
+        $users = User::orderBy('name')->paginate(25);
+
+        return view('admin.users', ['users' => $users, 'lockout' => $lockout]);
+    }
+
+    // Create a user with a random temporary password delivered by email (or SMS), never shown on screen (3.1.x).
+    public function store(Request $request, TemporaryPasswordService $temporary)
+    {
+        $data = $request->validate([
+            'name'  => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'unique:users'],
+            'phone' => ['nullable', 'string', 'max:30'],
+            'role'  => ['required', 'in:USER,ADMIN,BA,SO,SECURITY'],
+        ]);
+
+        // Placeholder only: issueFor() immediately replaces it with the real temporary password.
+        $user = User::create([...$data, 'password' => Hash::make(Str::random(40))]);
+
+        return $this->issue($temporary, $user, 'User created.');
+    }
+
+    public function temporaryPassword(User $user, TemporaryPasswordService $temporary)
+    {
+        return $this->issue($temporary, $user, 'Temporary password sent.');
+    }
+
+    public function lock(Request $request, User $user, LockoutService $lockout)
+    {
+        $lockout->lock($user, $request->user(), $request->input('reason', 'Suspicious activity'));
+
+        return back()->with('status', 'Account locked.');
+    }
+
+    public function unlock(Request $request, User $user, LockoutService $lockout)
+    {
+        $lockout->unlock($user, verifiedBy: $request->user());   // required for permanent/verification locks
+
+        return back()->with('status', 'Account unlocked.');
+    }
+
+    public function disable(Request $request, User $user, AccountService $accounts)
+    {
+        $accounts->disable($user, $request->input('reason', 'Disabled by administrator'), actor: $request->user());
+
+        return back()->with('status', 'Account disabled; sessions ended.');
+    }
+
+    public function enable(Request $request, User $user, AccountService $accounts)
+    {
+        $accounts->enable($user, actor: $request->user());       // forces a password change at next login
+
+        return back()->with('status', 'Account enabled.');
+    }
+
+    // 3.7.5: password made unusable, every session/token ended, change forced.
+    public function compromised(Request $request, User $user, AccountService $accounts)
+    {
+        $accounts->markCompromised($user, actor: $request->user());
+
+        return back()->with('status', 'Marked compromised. Issue a temporary password once identity is verified.');
+    }
+
+    // 3.8.3-3.8.5: disable the leaver today and rotate every shared secret they knew.
+    public function offboard(Request $request, User $user, OffboardingService $offboarding, ServiceAccountService $svc)
+    {
+        foreach ($offboarding->offboard($user, actor: $request->user()) as $account) {
+            $svc->rotate($account->user);
+        }
+
+        return back()->with('status', 'User offboarded.');
+    }
+
+    private function issue(TemporaryPasswordService $temporary, User $user, string $ok)
+    {
+        try {
+            $channel = $temporary->issueFor($user);               // "mail" or "sms"
+        } catch (NoSecureChannelException) {
+            return back()->withErrors(['email' => 'The user has no company email or registered phone.']);
+        } catch (DeliveryFailedException) {
+            return back()->withErrors(['email' => 'Delivery failed; nothing was changed.']);
+        }
+
+        return back()->with('status', "{$ok} Sent by {$channel}.");
+    }
+}
+```
+
+**Audit log viewer**: `app/Http/Controllers/Admin/AuditLogController.php`
+
+```php
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Mainul\PasswordPolicy\Models\PasswordAuditLog;
+
+class AuditLogController extends Controller
+{
+    public function __invoke(Request $request)
+    {
+        $logs = PasswordAuditLog::query()
+            ->when($request->filled('outcome'), fn ($q) => $q->where('outcome', $request->outcome))
+            ->when($request->filled('user_id'), fn ($q) => $q->where('user_id', $request->user_id))
+            ->latest()->paginate(50);
+
+        return view('admin.audit', ['logs' => $logs]);
+    }
+}
+```
+
+### Step 7. Views (Blade)
+
+Minimal pages; style them as you like. The MFA pages are bundled (restyle with
+`php artisan vendor:publish --tag=password-policy-views`).
+
+```blade
+{{-- resources/views/auth/login.blade.php --}}
+<form method="POST" action="{{ route('login') }}">
+    @csrf
+    @error('email') <p style="color:#b00">{{ $message }}</p> @enderror
+    <input type="email" name="email" value="{{ old('email') }}" placeholder="Email" required>
+    <input type="password" name="password" placeholder="Password" required>
+    <label><input type="checkbox" name="remember"> Remember me</label>
+    <button>Sign in</button>
+    <a href="{{ route('password.request') }}">Forgot password?</a>
+</form>
+```
+
+```blade
+{{-- resources/views/auth/register.blade.php --}}
+<form method="POST" action="{{ route('register') }}">
+    @csrf
+    @foreach ($errors->all() as $error) <p style="color:#b00">{{ $error }}</p> @endforeach
+    <input name="name" value="{{ old('name') }}" placeholder="Name" required>
+    <input type="email" name="email" value="{{ old('email') }}" placeholder="Email" required>
+    <input type="date" name="date_of_birth" value="{{ old('date_of_birth') }}">
+    <input type="password" name="password" placeholder="Password" required>
+    <input type="password" name="password_confirmation" placeholder="Confirm password" required>
+    <button>Register</button>
+</form>
+```
+
+```blade
+{{-- resources/views/auth/change-password.blade.php --}}
+@if ($forced)  <p>You are using a temporary password. Choose a new one to continue.</p> @endif
+@if ($expired) <p>Your password has expired. Choose a new one to continue.</p> @endif
+@if (session('warning')) <p>{{ session('warning') }}</p> @endif
+
+<form method="POST" action="{{ route('password.update') }}">
+    @csrf @method('PUT')
+    @foreach ($errors->all() as $error) <p style="color:#b00">{{ $error }}</p> @endforeach
+    @if ($needCurrent)
+        <input type="password" name="current_password" placeholder="Current password" required>
+    @endif
+    <input type="password" name="password" placeholder="New password" required>
+    <input type="password" name="password_confirmation" placeholder="Confirm new password" required>
+    <button>Change password</button>
+</form>
+```
+
+```blade
+{{-- resources/views/auth/forgot-password.blade.php --}}
+@if (session('status')) <p>{{ session('status') }}</p> @endif
+<form method="POST" action="{{ route('password.email') }}">
+    @csrf
+    @error('email') <p style="color:#b00">{{ $message }}</p> @enderror
+    <input type="email" name="email" placeholder="Email" required>
+    <button>Send reset link and code</button>
+</form>
+{{-- The emailed link opens a page that POSTs token, email, code, password and password_confirmation
+     to route('password.reset.store'); build it the same way as the form above. --}}
+```
+
+```blade
+{{-- resources/views/dashboard.blade.php --}}
+@if (session('status')) <p>{{ session('status') }}</p> @endif
+<h1>Welcome, {{ $user->name }}</h1>
+<p>Password changed: {{ $user->password_changed_at?->diffForHumans() }}</p>
+@can('password-policy.manage-users') <a href="{{ route('admin.users.index') }}">Manage users</a> @endcan
+@can('view-password-audit-logs') <a href="{{ route('admin.audit') }}">Audit log</a> @endcan
+<form method="POST" action="{{ route('logout') }}">@csrf <button>Log out</button></form>
+```
+
+```blade
+{{-- resources/views/admin/users.blade.php --}}
+@if (session('status')) <p>{{ session('status') }}</p> @endif
+@foreach ($errors->all() as $error) <p style="color:#b00">{{ $error }}</p> @endforeach
+
+<form method="POST" action="{{ route('admin.users.store') }}">
+    @csrf
+    <input name="name" placeholder="Name" required>
+    <input type="email" name="email" placeholder="Company email" required>
+    <input name="phone" placeholder="Phone (SMS fallback)">
+    <select name="role">@foreach (['USER','ADMIN','BA','SO','SECURITY'] as $r)<option>{{ $r }}</option>@endforeach</select>
+    <button>Create and send temporary password</button>
+</form>
+
+<table>
+@foreach ($users as $u)
+    @php($state = $lockout->lockState($u))
+    <tr>
+        <td>{{ $u->name }} ({{ $u->role }})</td>
+        <td>{{ $u->disabled_at ? 'Disabled' : ($state ? 'Locked: '.$state['type'] : 'Active') }}</td>
+        <td>
+            @foreach (['temp' => 'Send temporary password', 'lock' => 'Lock', 'unlock' => 'Unlock',
+                       'disable' => 'Disable', 'enable' => 'Enable', 'compromised' => 'Compromised',
+                       'offboard' => 'Offboard'] as $action => $label)
+                <form method="POST" action="{{ route('admin.users.'.$action, $u) }}" style="display:inline">
+                    @csrf <button>{{ $label }}</button>
+                </form>
+            @endforeach
+        </td>
+    </tr>
+@endforeach
+</table>
+{{ $users->links() }}
+```
+
+```blade
+{{-- resources/views/admin/audit.blade.php --}}
+<table>
+@foreach ($logs as $log)
+    <tr><td>{{ $log->created_at }}</td><td>{{ $log->event }}</td><td>{{ $log->outcome }}</td>
+        <td>{{ $log->user_id }}</td><td>{{ $log->ip_address }}</td></tr>
+@endforeach
+</table>
+{{ $logs->links() }}
+```
+
+### Step 8. Gates, vault and logging: `app/Providers/AppServiceProvider.php`
+
+```php
+use Illuminate\Support\Facades\Gate;
+
+public function boot(): void
+{
+    // Everything below is DENIED to everyone until you define it.
+    foreach (['password-policy.manage-users', 'password-policy.manage-service-accounts',
+              'password-policy.manage-settings', 'password-policy.view-compliance',
+              'view-password-audit-logs'] as $ability) {
+        Gate::define($ability, fn ($user) => $user->isSecurityOfficer());
+    }
+}
+```
+
+Service-account vault callback (replace the body with your real vault client; the package never stores the secret):
+
+```php
+<?php
+// app/Security/VaultWriter.php
+
+namespace App\Security;
+
+use Illuminate\Contracts\Auth\Authenticatable;
+
+class VaultWriter
+{
+    public function __invoke(Authenticatable $user, string $secret): void
+    {
+        // Vault::put("service-accounts/{$user->getAuthIdentifier()}", ['password' => $secret]);
+        // Throw an exception to abort: the rotation is rolled back.
+    }
+}
+```
+
+Keep secrets out of application logs. In `config/logging.php`:
+
+```php
+'single' => [
+    'driver' => 'single',
+    'path'   => storage_path('logs/laravel.log'),
+    'tap'    => [\Mainul\PasswordPolicy\Logging\RedactSensitiveData::class],
+],
+```
+
+React to security events (optional), also in `AppServiceProvider::boot()`:
+
+```php
+use Illuminate\Support\Facades\{Event, Log};
+use Mainul\PasswordPolicy\Events\{AccountLocked, UnusualLoginDetected};
+
+Event::listen(AccountLocked::class, fn ($e) => Log::warning("Locked {$e->user->email} ({$e->reason}, level {$e->level})"));
+Event::listen(UnusualLoginDetected::class, fn ($e) => Log::warning('Unusual login', ['reasons' => $e->reasons, 'ip' => $e->ip]));
+```
+
+### Step 9. Schedule: `routes/console.php`
+
+`password-policy:disable-expired` is scheduled for you. Add service-account rotation reminders:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('password-policy:rotation-due --notify')->daily();
+```
+
+Make sure the scheduler runs (`* * * * * php /path/to/artisan schedule:run`) and the queue/mail settings are valid.
+
+### Step 10. Seed demo accounts: `database/seeders/DatabaseSeeder.php`
+
+```php
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Mainul\PasswordPolicy\Services\ServiceAccountService;
+
+public function run(): void
+{
+    User::create(['name' => 'Admin', 'email' => 'admin@acme.com', 'role' => 'ADMIN',
+                  'password' => Hash::make('Tr1cky#Horse9!Stable')]);   // 14+ chars: admin rules
+    User::create(['name' => 'Jane Doe', 'email' => 'jane@acme.com', 'role' => 'USER',
+                  'password' => Hash::make('Tr1cky#Horse9')]);
+
+    // A bot account: owner + purpose, rotated every 90 days, never signs in interactively.
+    $bot = User::create(['name' => 'ETL Bot', 'email' => 'etl-bot@acme.com', 'role' => 'USER',
+                         'password' => Hash::make(str()->random(40))]);
+    app(ServiceAccountService::class)->register($bot, owner: 'Jane Doe', purpose: 'Nightly ETL', rotationDays: 90);
+}
+```
+
+```bash
+php artisan db:seed
+```
+
+### Step 11. Turn on authenticator-app MFA (optional, Feature 10)
+
+```bash
+php artisan password-policy:totp --enable --scope=all --grace-days=7
+php artisan password-policy:totp --status
+```
+
+Admins are always challenged. Users are sent to `mfa/enroll` (QR code via `bacon/bacon-qr-code`) and, on later
+logins, to `mfa/challenge`. Recovery codes are shown once. For a lost phone: `php artisan password-policy:totp --reset=jane@acme.com`.
+To use SMS/e-mail codes instead, implement `MfaDriver` ([Feature 11](#11-custom-mfa-driver)).
+
+### Step 12. JSON API for a mobile app or SPA (optional)
+
+Already on through `'api' => ['enabled' => true]` in Step 3. Issue the user a Sanctum token from your own API login
+(call `POST /api/password-policy/login/check` first so locked accounts are refused), then:
+
+```bash
+curl -H "Authorization: Bearer <token>" -H "Accept: application/json" \
+     https://acme-portal.test/api/password-policy/password/status
+```
+
+See the [JSON API](#json-api) section for every endpoint and the admin abilities (the Gates from Step 8 already allow
+security officers).
+
+### Step 13. Production checks
+
+```bash
+php artisan password-policy:check            # self-test; non-zero exit on failure (run it in CI)
+php artisan password-policy:check-defaults   # accounts still on a known default password (3.9.5)
+php artisan password-policy:audit --limit=20 # recent audit entries
+```
+
+Set `APP_ENV=production` and serve over HTTPS so `password.secure` is active. Behind a proxy or load balancer
+configure trusted proxies so `$request->secure()` is correct.
+
+### Step 14. Try it end to end
+
+| Do this | Expect |
+|---|---|
+| Sign in as `jane@acme.com` with a wrong password 5 times | Locked for 5 minutes with one generic message; the audit log shows `failure`/`lockout` |
+| As admin, create a user on `/admin/users` | A temporary password arrives by email (see `storage/logs/laravel.log` with `MAIL_MAILER=log`) |
+| Sign in with that temporary password | Every page redirects to `/password/change` until it is replaced |
+| Change the password to one containing the user's name, to `Abcd1234!x`, or to a recent password | Rejected with a message listing what is missing |
+| Change the password successfully | Other browsers/tokens for the user are signed out; a `password_histories` row is added |
+| Set `expiry.days` to `0` or move `password_changed_at` back 31 days | The user is prompted, then disabled one day later by `password-policy:disable-expired` |
+| Click **Compromised** on a user | Their password is unusable, all sessions end and a change is forced |
+| Click **Offboard** on a user who knew a service-account password | The account is disabled and the service account is rotated through `VaultWriter` |
+| Visit `/admin/audit` as a normal user | `403` until your Gate allows it |
+
+Every feature of the package is covered by this walkthrough: rules (Features 1), history (2), current password
+(3), expiry (4), temporary passwords (5), lockout (6), disable/enable/compromise (7), session termination (8), reset
+protection (9), authenticator MFA (10, 11), admin accounts (12), service accounts (13), offboarding (14), audit log
+(15), unusual-login alerts (16, set `anomaly.alert_recipients`), HTTPS (17) and default-password scan (18).
+
 ## Commands
 
 | Command | Purpose |
@@ -1229,12 +2037,13 @@ MIT
 3. [দ্রুত শুরু](#দ্রুত-শুরু)
 4. [বৈশিষ্ট্য নির্দেশিকা](#বৈশিষ্ট্য-নির্দেশিকা)
 5. [JSON API](#json-api-1)
-6. [Artisan command](#artisan-command)
-7. [Event](#event)
-8. [কনফিগারেশন](#কনফিগারেশন)
-9. [ব্যবহারের আগে গুরুত্বপূর্ণ বিষয়](#ব্যবহারের-আগে-গুরুত্বপূর্ণ-বিষয়)
-10. [নীতি-সম্মতি](#নীতি-সম্মতি)
-11. [পরীক্ষা, আপগ্রেড ও লাইসেন্স](#পরীক্ষা-আপগ্রেড-ও-লাইসেন্স)
+6. [সম্পূর্ণ উদাহরণ (MVC)](#সম্পূর্ণ-উদাহরণ-mvc)
+7. [Artisan command](#artisan-command)
+8. [Event](#event)
+9. [কনফিগারেশন](#কনফিগারেশন)
+10. [ব্যবহারের আগে গুরুত্বপূর্ণ বিষয়](#ব্যবহারের-আগে-গুরুত্বপূর্ণ-বিষয়)
+11. [নীতি-সম্মতি](#নীতি-সম্মতি)
+12. [পরীক্ষা, আপগ্রেড ও লাইসেন্স](#পরীক্ষা-আপগ্রেড-ও-লাইসেন্স)
 
 ### বৈশিষ্ট্য
 
@@ -1384,6 +2193,12 @@ Endpoint group-গুলোর সারাংশ:
 | `admin/audit`, `admin/compliance/*` | audit query, self-test ও default-password scan |
 
 সম্পূর্ণ method/path, request field, response, curl flow এবং mobile MFA example উপরের [Endpoints](#endpoints) ও [Examples](#examples) অংশে আছে। API token-এর MFA verification cache-এ token-ভিত্তিকভাবে default ১২ ঘণ্টা থাকে; বহু server-এ shared cache ব্যবহার করুন। Reset code user-dependent check-এর আগে spent হয়, তাই failed attempt-এর পরে নতুন code চাইতে হবে। Login action নিজে এবং Laravel reset-link flow এই API-এর অংশ নয়।
+
+<a id="সম্পূর্ণ-উদাহরণ-mvc"></a>
+
+### সম্পূর্ণ উদাহরণ (MVC)
+
+একটি একদম নতুন Laravel প্রজেক্টে প্যাকেজের **সব বৈশিষ্ট্য** ব্যবহারের ধাপে ধাপে উদাহরণ উপরের English অংশের [Complete example](#complete-example) সেকশনে আছে। এতে Model (`User`), View (Blade), Controller ও Form validation MVC কাঠামোতে সাজানো: প্রজেক্ট তৈরি ও ইনস্টল, migration, config, route, login/register/change-password/forgot-password controller, admin user management (temporary password, lock/unlock, disable, compromise, offboard), audit log, Gate, vault, schedule, seeder, MFA, JSON API এবং production check। ধাপগুলো ক্রমানুযায়ী অনুসরণ করুন।
 
 ### Artisan command
 
