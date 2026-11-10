@@ -2,8 +2,9 @@
 
 namespace Mainul\PasswordPolicy\Listeners;
 
-use Illuminate\Support\Facades\Mail;
 use Mainul\PasswordPolicy\Events\UnusualLoginDetected;
+use Mainul\PasswordPolicy\Mail\PlainTextMail;
+use Mainul\PasswordPolicy\Support\MailDispatcher;
 use Throwable;
 
 /** Default alert: an email to `anomaly.alert_recipients` (3.7.4). */
@@ -27,7 +28,7 @@ class SendUnusualLoginAlert
             . 'Time: ' . now()->toDateTimeString() . ' ' . now()->timezoneName;
 
         try {
-            Mail::raw($body, fn ($m) => $m->to($recipients)->subject('Unusual login activity'));
+            MailDispatcher::send($recipients, new PlainTextMail($body, 'Unusual login activity'), 'unusual_login');
         } catch (Throwable $e) {
             report($e);
         }

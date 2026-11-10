@@ -125,9 +125,13 @@ class ServiceAccountService
             return 0;
         }
 
-        \Illuminate\Support\Facades\Mail::raw(
-            "Service account password rotation is due:\n{$lines}",
-            fn ($m) => $m->to($recipients)->subject('Service account rotation due')
+        \Mainul\PasswordPolicy\Support\MailDispatcher::send(
+            $recipients,
+            new \Mainul\PasswordPolicy\Mail\PlainTextMail(
+                "Service account password rotation is due:\n{$lines}",
+                'Service account rotation due'
+            ),
+            'service_account_due'
         );
 
         return count($recipients);

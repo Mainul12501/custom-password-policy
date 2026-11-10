@@ -434,6 +434,44 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Mail Queueing
+    |--------------------------------------------------------------------------
+    |
+    | By default every mail this package sends (temporary password, unusual
+    | login alert, service-account rotation notice) is sent synchronously.
+    | Set `enabled` to true to push them onto the Laravel queue instead.
+    |
+    | enabled:    queue the mails (needs a running queue worker).
+    | connection: queue connection name; null uses the app default.
+    | queue:      queue name; null uses the connection default.
+    |
+    | Per-type overrides: `types.<type>` may be true/false to override
+    | `enabled` for one mail type. Types: temporary_password, text (generic
+    | plain-text notices), unusual_login, service_account_due.
+    |
+    | SECURITY: queueing the temporary-password mail stores the plaintext
+    | temporary password in the queue payload (database/redis table) until the
+    | job runs. Leave `types.temporary_password` false if that is not
+    | acceptable. Also, with a queued mail a send failure happens later in the
+    | worker, so the SMS fallback (delivery_order) is NOT triggered for it.
+    |
+    */
+    'mail' => [
+        'queue' => [
+            'enabled'    => env('PASSWORD_POLICY_MAIL_QUEUE', false),
+            'connection' => env('PASSWORD_POLICY_MAIL_QUEUE_CONNECTION'),
+            'queue'      => env('PASSWORD_POLICY_MAIL_QUEUE_NAME'),
+            'types'      => [
+                'temporary_password'  => null,
+                'text'                => null,
+                'unusual_login'       => null,
+                'service_account_due' => null,
+            ],
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Current Password Confirmation (Policy 3.5.4)
     |--------------------------------------------------------------------------
     |
