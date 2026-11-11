@@ -104,7 +104,7 @@ class PasswordPolicyServiceProvider extends ServiceProvider
             $this->loadRoutesFrom(__DIR__ . '/../routes/mfa.php');
         }
 
-        if (config('password-policy.temporary_password.routes', false) && ! $this->app->routesAreCached()) {
+        if (config('password-policy.admin_routes.enabled', false) && ! $this->app->routesAreCached()) {
             $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
         }
 

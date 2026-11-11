@@ -231,6 +231,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Web Admin Routes
+    |--------------------------------------------------------------------------
+    |
+    | Browser (web) versions of the API's administrator actions, for apps that
+    | do not use the JSON API. Off by default. Each route is POST (reset-mfa is
+    | DELETE) under {prefix}/ and named password-policy.admin.*:
+    |
+    |   users/{user}/lock | unlock | disable | enable | compromise
+    |   users/{user}/temporary-password | terminate-sessions | offboard
+    |   DELETE users/{user}/mfa
+    |   accounts/disable-expired
+    |
+    | Every action is authorised with the `api.abilities.users` Gate ability
+    | (denied until you Gate::define() it) and audited by its service.
+    | Browsers are redirected back with a `status` flash; JSON requests get
+    | the API's JSON. Put `password.mfa` etc. in `middleware` to harden them.
+    | To build your own screens instead, call the services directly.
+    |
+    */
+    'admin_routes' => [
+        'enabled'    => false,
+        'prefix'     => 'admin',
+        'middleware' => ['web', 'auth'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | JSON API
     |--------------------------------------------------------------------------
     |
@@ -418,19 +445,12 @@ return [
     |                        at first login. Override shouldIssueTemporaryPassword()
     |                        on the model to skip some users. A delivery failure
     |                        never blocks the user creation; it is reported/audited.
-    | routes:                load the bundled web route
-    |                        POST {route_prefix}/users/{user}/temporary-password
-    |                        (name: password-policy.users.temporary-password), the
-    |                        web twin of the API endpoint. Needs the
-    |                        `api.abilities.users` Gate ability. Leave false to call
-    |                        TemporaryPasswordService::issueFor() from your own controller.
-    | route_prefix / route_middleware: URL prefix and middleware for that route.
+    |
+    | The web route that reissues a temporary password is configured under
+    | `admin_routes` (see below).
     |
     */
     'temporary_password' => [
-        'routes'                => false,
-        'route_prefix'          => 'admin',
-        'route_middleware'      => ['web', 'auth'],
         'auto_issue_on_create'  => false,
         'length'                => 14,
         'delivery_order'        => ['mail', 'sms'],

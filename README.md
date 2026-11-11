@@ -384,10 +384,41 @@ try {
 ```
 
 **Bundled web route** (off by default, the web twin of `POST api/password-policy/admin/users/{user}/temporary-password`):
-set `temporary_password.routes => true` and a `POST admin/users/{user}/temporary-password` route named
-`password-policy.users.temporary-password` is registered (change `route_prefix` / `route_middleware` as needed). It needs
-the `api.abilities.users` Gate ability (`password-policy.manage-users`), reissues through `issueFor()`, never shows the
-password, and redirects back with `status` / `temporary_password` errors (or returns JSON for `Accept: application/json`).
+set `admin_routes.enabled => true` and `POST admin/users/{user}/temporary-password` (route name
+`password-policy.admin.users.temporary-password`) is registered, together with the other admin actions (see
+[Web admin routes](#web-admin-routes)). It reissues through `issueFor()` and never shows the password.
+
+### Web admin routes
+
+`admin_routes.enabled => true` registers browser versions of the API's admin actions (change `admin_routes.prefix` /
+`admin_routes.middleware` as needed). All need the `api.abilities.users` Gate ability (`password-policy.manage-users`),
+are audited by their services, redirect back with a `status` flash (or `errors` on failure), and return the API's JSON
+for `Accept: application/json` requests.
+
+| Route (under `admin_routes.prefix`) | Name (`password-policy.admin.`) | Does |
+|---|---|---|
+| `POST users/{user}/lock` (`reason`) | `users.lock` | Lock now |
+| `POST users/{user}/unlock` (`verified_by`) | `users.unlock` | Unlock, recording who verified the user |
+| `POST users/{user}/disable` (`reason`) | `users.disable` | Disable the account |
+| `POST users/{user}/enable` | `users.enable` | Enable; password change forced at next login |
+| `POST users/{user}/compromise` | `users.compromise` | Password unusable, sessions ended |
+| `POST users/{user}/temporary-password` | `users.temporary-password` | Send a new temporary password |
+| `POST users/{user}/terminate-sessions` | `users.terminate-sessions` | End all sessions and tokens |
+| `POST users/{user}/offboard` | `users.offboard` | Leaver flow; flashes `password_policy.rotation_required` |
+| `DELETE users/{user}/mfa` | `users.mfa.reset` | Wipe the authenticator app |
+| `POST accounts/disable-expired` (`dry_run`) | `accounts.disable-expired` | Disable accounts expired past the grace period |
+
+```blade
+<form method="POST" action="{{ route('password-policy.admin.users.lock', $user) }}">
+    @csrf <input name="reason"> <button>Lock</button>
+</form>
+<form method="POST" action="{{ route('password-policy.admin.users.mfa.reset', $user) }}">
+    @csrf @method('DELETE') <button>Reset authenticator</button>
+</form>
+```
+
+The read-only API endpoints (`show`, `known-logins`), service accounts, settings, audit and compliance are not bundled
+on the web because they need views; use the services directly.
 
 - **Channel order**: `temporary_password.delivery_order` (`['mail', 'sms']`). Company email first; SMS only when
   there is no usable email (3.1.3). There is never an unprotected fallback.
