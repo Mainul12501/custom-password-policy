@@ -418,9 +418,19 @@ return [
     |                        at first login. Override shouldIssueTemporaryPassword()
     |                        on the model to skip some users. A delivery failure
     |                        never blocks the user creation; it is reported/audited.
+    | routes:                load the bundled web route
+    |                        POST {route_prefix}/users/{user}/temporary-password
+    |                        (name: password-policy.users.temporary-password), the
+    |                        web twin of the API endpoint. Needs the
+    |                        `api.abilities.users` Gate ability. Leave false to call
+    |                        TemporaryPasswordService::issueFor() from your own controller.
+    | route_prefix / route_middleware: URL prefix and middleware for that route.
     |
     */
     'temporary_password' => [
+        'routes'                => false,
+        'route_prefix'          => 'admin',
+        'route_middleware'      => ['web', 'auth'],
         'auto_issue_on_create'  => false,
         'length'                => 14,
         'delivery_order'        => ['mail', 'sms'],

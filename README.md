@@ -383,6 +383,12 @@ try {
 }
 ```
 
+**Bundled web route** (off by default, the web twin of `POST api/password-policy/admin/users/{user}/temporary-password`):
+set `temporary_password.routes => true` and a `POST admin/users/{user}/temporary-password` route named
+`password-policy.users.temporary-password` is registered (change `route_prefix` / `route_middleware` as needed). It needs
+the `api.abilities.users` Gate ability (`password-policy.manage-users`), reissues through `issueFor()`, never shows the
+password, and redirects back with `status` / `temporary_password` errors (or returns JSON for `Accept: application/json`).
+
 - **Channel order**: `temporary_password.delivery_order` (`['mail', 'sms']`). Company email first; SMS only when
   there is no usable email (3.1.3). There is never an unprotected fallback.
 - **Company email only**: `temporary_password.company_email_domains = ['acme.com']`.
